@@ -1,0 +1,147 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: synthrad-multitask-train-job
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: nvidia.com/gpu.product
+                operator: In
+                values:
+                - NVIDIA-A100-SXM4-80GB
+                - NVIDIA-A100-SXM4-40GB
+                - NVIDIA-A6000
+                - NVIDIA-RTX-A6000
+                - NVIDIA-GeForce-RTX-3090
+                - NVIDIA-GeForce-RTX-2080-Ti
+      containers:
+      - name: synthrad-multitask-training
+        image: nvcr.io/nvidia/pytorch:23.10-py3
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: REPO_PATH
+          value: /opt/repo/multi-task
+        - name: ABLATION_NAME
+          value: plus_anatomy_consistency
+
+        command:
+        - "bash"
+        - "-c"
+        - |
+          echo "Checking GPU..."
+          nvidia-smi
+
+          mkdir -p /opt/repo && cd /opt/repo
+
+          if [ -d "multi-task" ]; then
+            cd multi-task && git pull origin main
+          else
+            git clone --single-branch -b main \
+              https://github.com/Deb-bie/multi-task.git \
+              multi-task
+            cd multi-task
+          fi
+
+          pip install -q \
+            numpy==1.24.3 \
+            pandas==2.0.3 \
+            SimpleITK==2.3.1 \
+            opencv-python-headless \
+            torchmetrics \
+            tqdm \
+            matplotlib \
+            scipy \
+            psutil \
+            scikit-image \
+            torchvision
+
+          export PYTHONPATH=/opt/repo/multi-task
+
+          LOG_DIR=/data/results/logs/${ABLATION_NAME}
+          mkdir -p /data/results/checkpoints/${ABLATION_NAME}/head_neck
+          mkdir -p /data/results/checkpoints/${ABLATION_NAME}/thorax
+          mkdir -p /data/results/checkpoints/${ABLATION_NAME}/abdomen
+          mkdir -p ${LOG_DIR}
+
+          MASTER_LOG=${LOG_DIR}/training_all.log
+
+          echo "========================================" >> ${MASTER_LOG}
+          echo "Job started at $(date)"                  >> ${MASTER_LOG}
+          echo "Ablation: ${ABLATION_NAME}"              >> ${MASTER_LOG}
+          nvidia-smi                                     >> ${MASTER_LOG}
+
+          # ── head_neck ──────────────────────────────────────────────────────
+          echo "Starting head_neck at $(date)" >> ${MASTER_LOG}
+
+          python train/train_multitask.py \
+            --anatomy       head_neck \
+            --data_root     /data/Task1 \
+            --split_dir     /data/splits \
+            --config        configs/base_config.json \
+            --output_dir    /data/results \
+            --ablation_name ${ABLATION_NAME} \
+            >> ${LOG_DIR}/multitask_head_neck.log 2>&1
+
+          echo "head_neck finished at $(date)" >> ${MASTER_LOG}
+
+          # ── thorax ─────────────────────────────────────────────────────────
+          echo "Starting thorax at $(date)" >> ${MASTER_LOG}
+
+          python train/train_multitask.py \
+            --anatomy       thorax \
+            --data_root     /data/Task1 \
+            --split_dir     /data/splits \
+            --config        configs/base_config.json \
+            --output_dir    /data/results \
+            --ablation_name ${ABLATION_NAME} \
+            >> ${LOG_DIR}/multitask_thorax.log 2>&1
+
+          echo "thorax finished at $(date)" >> ${MASTER_LOG}
+
+          # ── abdomen ────────────────────────────────────────────────────────
+          echo "Starting abdomen at $(date)" >> ${MASTER_LOG}
+
+          python train/train_multitask.py \
+            --anatomy       abdomen \
+            --data_root     /data/Task1 \
+            --split_dir     /data/splits \
+            --config        configs/base_config.json \
+            --output_dir    /data/results \
+            --ablation_name ${ABLATION_NAME} \
+            >> ${LOG_DIR}/multitask_abdomen.log 2>&1
+
+          echo "abdomen finished at $(date). All training complete." >> ${MASTER_LOG}
+
+        volumeMounts:
+        - name: git-volume
+          mountPath: /opt/repo
+        - name: synthrad-data-volume
+          mountPath: /data
+
+        resources:
+          limits:
+            memory: 128Gi
+            cpu: "16"
+            nvidia.com/gpu: "1"
+            ephemeral-storage: 50Gi
+          requests:
+            memory: 64Gi
+            cpu: "12"
+            nvidia.com/gpu: "1"
+            ephemeral-storage: 20Gi
+
+      volumes:
+      - name: git-volume
+        emptyDir: {}
+      - name: synthrad-data-volume
+        persistentVolumeClaim:
+          claimName: synthrad-multitask-train-data
