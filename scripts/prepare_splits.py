@@ -31,16 +31,25 @@ Output
 Usage
 -----
     python scripts/prepare_splits.py \\
-        --data_root /data/synthrad2025 \\
+        --data_root /data/Task1/Task1 \\
+        --anatomy   head_neck \\
+        --split_dir splits/ \\
+        --seed      42
+
+    # When the on-disk directory name differs from the anatomy label
+    # (e.g. SynthRAD2025 uses HN / TH / AB), pass --data_dir explicitly:
+    python scripts/prepare_splits.py \\
+        --data_dir  /data/Task1/Task1/HN \\
         --anatomy   head_neck \\
         --split_dir splits/ \\
         --seed      42
 
     # Or via environment variables:
-    DATA_ROOT=/data/synthrad2025 ANATOMY=thorax python scripts/prepare_splits.py
+    DATA_ROOT=/data/Task1/Task1 ANATOMY=thorax python scripts/prepare_splits.py
 
-All four of DATA_ROOT, ANATOMY, SPLIT_DIR, and SEED may also be passed as
+All of DATA_ROOT, ANATOMY, SPLIT_DIR, and SEED may also be passed as
 environment variables (command-line arguments take precedence).
+--data_dir takes precedence over --data_root when both are supplied.
 """
 
 from __future__ import annotations
@@ -51,7 +60,7 @@ import os
 import random
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -75,8 +84,7 @@ _VAL_RATIO:   float = 0.14
 # ---------------------------------------------------------------------------
 
 def _discover_patients(
-    data_root: Path,
-    anatomy:   str,
+    anat_dir: Path,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Scan the anatomy directory and collect valid patient entries.
 
@@ -84,8 +92,7 @@ def _discover_patients(
     Directories where any file is missing are excluded and logged.
 
     Args:
-        data_root: Root of the SynthRAD2025 dataset.
-        anatomy:   Anatomical region name.
+        anat_dir: Direct path to the anatomy directory (e.g. /data/Task1/Task1/HN).
 
     Returns:
         Tuple ``(valid_entries, missing_entries)`` where each entry in
@@ -94,7 +101,6 @@ def _discover_patients(
         and *missing_entries* is a list of patient IDs where at least one file
         was absent.
     """
-    anat_dir = data_root / anatomy
     if not anat_dir.is_dir():
         raise FileNotFoundError(f"Anatomy directory not found: {anat_dir}")
 
@@ -177,27 +183,47 @@ def _split_patients(
 # ---------------------------------------------------------------------------
 
 def prepare_splits(
-    data_root:  str,
     anatomy:    str,
     split_dir:  str,
     seed:       int,
+    data_root:  Optional[str] = None,
+    data_dir:   Optional[str] = None,
 ) -> None:
     """Discover patients, split, verify paths, and write the JSON file.
 
+    Either *data_root* or *data_dir* must be supplied:
+
+    * **data_root** – root of the dataset; anatomy sub-directory is appended
+      automatically (``data_root / anatomy``).
+    * **data_dir** – direct path to the anatomy directory.  Takes precedence
+      over *data_root* when both are provided.  Use this when the on-disk
+      directory name differs from the anatomy label (e.g. SynthRAD2025 stores
+      head-and-neck data under ``HN/`` rather than ``head_neck/``).
+
     Args:
-        data_root: Root directory of the SynthRAD2025 dataset.
-        anatomy:   Anatomical region (``"head_neck"``, ``"thorax"``,
-                   ``"abdomen"``).
+        anatomy:   Anatomical region label used for naming the output JSON
+                   (``"head_neck"``, ``"thorax"``, ``"abdomen"``).
         split_dir: Directory where the split JSON will be written.
         seed:      Random seed for the shuffle.
+        data_root: Root directory of the SynthRAD2025 dataset (optional if
+                   *data_dir* is given).
+        data_dir:  Direct path to the anatomy directory (takes precedence over
+                   *data_root*).
     """
-    data_root_p = Path(data_root).resolve()
     split_dir_p = Path(split_dir)
     split_dir_p.mkdir(parents=True, exist_ok=True)
 
-    print(f"Scanning: {data_root_p / anatomy}")
+    # Resolve the anatomy directory
+    if data_dir is not None:
+        anat_dir = Path(data_dir).resolve()
+    elif data_root is not None:
+        anat_dir = Path(data_root).resolve() / anatomy
+    else:
+        raise ValueError("Either --data_root or --data_dir must be supplied.")
 
-    valid_patients, missing = _discover_patients(data_root_p, anatomy)
+    print(f"Scanning: {anat_dir}")
+
+    valid_patients, missing = _discover_patients(anat_dir)
 
     if missing:
         print(f"\n[WARNING] {len(missing)} patient(s) excluded (missing files):")
@@ -246,13 +272,23 @@ def parse_args() -> argparse.Namespace:
         "--data_root",
         default=os.environ.get("DATA_ROOT"),
         help="Root directory of the SynthRAD2025 dataset "
-             "(or set DATA_ROOT env var).",
+             "(or set DATA_ROOT env var). "
+             "The anatomy sub-directory is appended automatically. "
+             "Ignored when --data_dir is supplied.",
+    )
+    p.add_argument(
+        "--data_dir",
+        default=os.environ.get("DATA_DIR"),
+        help="Direct path to the anatomy directory "
+             "(e.g. /data/Task1/HN for head_neck). "
+             "Takes precedence over --data_root when both are supplied.",
     )
     p.add_argument(
         "--anatomy",
         default=os.environ.get("ANATOMY"),
         choices=["head_neck", "thorax", "abdomen"],
-        help="Anatomical region (or set ANATOMY env var).",
+        help="Anatomical region label used for output JSON naming "
+             "(or set ANATOMY env var).",
     )
     p.add_argument(
         "--split_dir",
@@ -269,8 +305,11 @@ def parse_args() -> argparse.Namespace:
 
     # Validate required arguments
     errors = []
-    if args.data_root is None:
-        errors.append("--data_root is required (or set DATA_ROOT env var).")
+    if args.data_root is None and args.data_dir is None:
+        errors.append(
+            "Either --data_root or --data_dir is required "
+            "(or set DATA_ROOT / DATA_DIR env var)."
+        )
     if args.anatomy is None:
         errors.append("--anatomy is required (or set ANATOMY env var).")
     if errors:
@@ -286,10 +325,11 @@ def main() -> None:
     """Entry point for the split generator."""
     args = parse_args()
     prepare_splits(
-        data_root = args.data_root,
         anatomy   = args.anatomy,
         split_dir = args.split_dir,
         seed      = args.seed,
+        data_root = args.data_root,
+        data_dir  = args.data_dir,
     )
 
 

@@ -48,6 +48,15 @@ spec:
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "${MASTER_LOG}"
           }
 
+          # ── SynthRAD2025 on-disk directory names ───────────────────────────
+          # The PVC stores data under HN / TH / AB; anatomy labels used for
+          # configs and checkpoints remain head_neck / thorax / abdomen.
+          declare -A ANATOMY_DIR=(
+            ["head_neck"]="HN"
+            ["thorax"]="TH"
+            ["abdomen"]="AB"
+          )
+
           echo "Checking GPU..."
           nvidia-smi
 
@@ -88,13 +97,14 @@ spec:
           log "Running pre-flight checks..."
 
           # Verify data root exists and has the expected anatomy directories
-          DATA_ROOT=/data/Task1
+          DATA_ROOT=/data/Task1/Task1
           for ANATOMY in head_neck thorax abdomen; do
-            if [ ! -d "${DATA_ROOT}/${ANATOMY}" ]; then
-              log "ERROR: Data directory missing: ${DATA_ROOT}/${ANATOMY}"
+            DIR_NAME="${ANATOMY_DIR[$ANATOMY]}"
+            if [ ! -d "${DATA_ROOT}/${DIR_NAME}" ]; then
+              log "ERROR: Data directory missing: ${DATA_ROOT}/${DIR_NAME} (anatomy=${ANATOMY})"
               exit 1
             fi
-            log "  Found: ${DATA_ROOT}/${ANATOMY}"
+            log "  Found: ${DATA_ROOT}/${DIR_NAME} (anatomy=${ANATOMY})"
           done
 
           # Verify Python can import the project
@@ -115,13 +125,14 @@ spec:
 
           # ── Generate train/val/test splits (idempotent — skips if exists) ───
           for ANATOMY in head_neck thorax abdomen; do
+            DIR_NAME="${ANATOMY_DIR[$ANATOMY]}"
             SPLIT_FILE="${SPLIT_DIR}/${ANATOMY}_split.json"
             if [ -f "${SPLIT_FILE}" ]; then
               log "Split already exists for ${ANATOMY}: ${SPLIT_FILE}"
             else
-              log "Generating split for ${ANATOMY}..."
+              log "Generating split for ${ANATOMY} (data dir: ${DATA_ROOT}/${DIR_NAME})..."
               python scripts/prepare_splits.py \
-                --data_root "${DATA_ROOT}" \
+                --data_dir  "${DATA_ROOT}/${DIR_NAME}" \
                 --anatomy   "${ANATOMY}" \
                 --split_dir "${SPLIT_DIR}" \
                 --seed      42 \
