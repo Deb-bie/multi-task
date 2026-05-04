@@ -37,20 +37,38 @@ spec:
         - "bash"
         - "-c"
         - |
+          # ── Fail immediately on any error, treat unset vars as errors ──────
+          set -euo pipefail
+
+          # ── Helper: log to both master log and kubectl logs (stdout) ────────
+          LOG_DIR=/data/results/logs/${ABLATION_NAME}
+          MASTER_LOG=${LOG_DIR}/training_all.log
+
+          log() {
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "${MASTER_LOG}"
+          }
+
           echo "Checking GPU..."
           nvidia-smi
 
+          # ── Clone / update repo ─────────────────────────────────────────────
           mkdir -p /opt/repo && cd /opt/repo
 
-          if [ -d "multi-task" ]; then
+          if [ -d "multi-task/.git" ]; then
+            log "Repo exists — pulling latest"
             cd multi-task && git pull origin main
           else
+            log "Cloning repo..."
             git clone --single-branch -b main \
               https://github.com/Deb-bie/multi-task.git \
               multi-task
             cd multi-task
           fi
 
+          log "Repo HEAD: $(git rev-parse --short HEAD)"
+
+          # ── Install dependencies ────────────────────────────────────────────
+          log "Installing Python dependencies..."
           pip install -q \
             numpy==1.24.3 \
             pandas==2.0.3 \
@@ -66,61 +84,80 @@ spec:
 
           export PYTHONPATH=/opt/repo/multi-task
 
-          LOG_DIR=/data/results/logs/${ABLATION_NAME}
+          # ── Pre-flight checks ───────────────────────────────────────────────
+          log "Running pre-flight checks..."
+
+          # Verify data root exists and has the expected anatomy directories
+          DATA_ROOT=/data/Task1
+          for ANATOMY in head_neck thorax abdomen; do
+            if [ ! -d "${DATA_ROOT}/${ANATOMY}" ]; then
+              log "ERROR: Data directory missing: ${DATA_ROOT}/${ANATOMY}"
+              exit 1
+            fi
+            log "  Found: ${DATA_ROOT}/${ANATOMY}"
+          done
+
+          # Verify Python can import the project
+          python -c "from src.models import MultitaskCycleGAN; from src.dataset import make_dataloader, load_split; print('imports OK')"
+
+          # ── Create output directories ───────────────────────────────────────
+          SPLIT_DIR=/data/splits
           mkdir -p /data/results/checkpoints/${ABLATION_NAME}/head_neck
           mkdir -p /data/results/checkpoints/${ABLATION_NAME}/thorax
           mkdir -p /data/results/checkpoints/${ABLATION_NAME}/abdomen
-          mkdir -p ${LOG_DIR}
+          mkdir -p "${LOG_DIR}"
+          mkdir -p "${SPLIT_DIR}"
 
-          MASTER_LOG=${LOG_DIR}/training_all.log
+          log "========================================"
+          log "Job started"
+          log "Ablation: ${ABLATION_NAME}"
+          nvidia-smi | tee -a "${MASTER_LOG}"
 
-          echo "========================================" >> ${MASTER_LOG}
-          echo "Job started at $(date)"                  >> ${MASTER_LOG}
-          echo "Ablation: ${ABLATION_NAME}"              >> ${MASTER_LOG}
-          nvidia-smi                                     >> ${MASTER_LOG}
+          # ── Generate train/val/test splits (idempotent — skips if exists) ───
+          for ANATOMY in head_neck thorax abdomen; do
+            SPLIT_FILE="${SPLIT_DIR}/${ANATOMY}_split.json"
+            if [ -f "${SPLIT_FILE}" ]; then
+              log "Split already exists for ${ANATOMY}: ${SPLIT_FILE}"
+            else
+              log "Generating split for ${ANATOMY}..."
+              python scripts/prepare_splits.py \
+                --data_root "${DATA_ROOT}" \
+                --anatomy   "${ANATOMY}" \
+                --split_dir "${SPLIT_DIR}" \
+                --seed      42 \
+                2>&1 | tee -a "${MASTER_LOG}"
+            fi
+          done
 
-          # ── head_neck ──────────────────────────────────────────────────────
-          echo "Starting head_neck at $(date)" >> ${MASTER_LOG}
+          # ── Train each anatomy — tee output to both file and kubectl logs ───
+          # tee sends to file; the parent process's stdout goes to kubectl logs.
+          # The `|| { ...; exit 1; }` block catches failures and prints which
+          # anatomy failed so the Job is marked Failed, not Completed.
 
-          python train/train_multitask.py \
-            --anatomy       head_neck \
-            --data_root     /data/Task1 \
-            --split_dir     /data/splits \
-            --config        configs/base_config.json \
-            --output_dir    /data/results \
-            --ablation_name ${ABLATION_NAME} \
-            >> ${LOG_DIR}/multitask_head_neck.log 2>&1
+          for ANATOMY in head_neck thorax abdomen; do
+            log "========================================"
+            log "Starting training: ${ANATOMY}"
 
-          echo "head_neck finished at $(date)" >> ${MASTER_LOG}
+            python train/train_multitask.py \
+              --anatomy       "${ANATOMY}" \
+              --data_root     "${DATA_ROOT}" \
+              --split_dir     "${SPLIT_DIR}" \
+              --config        configs/base_config.json \
+              --output_dir    /data/results \
+              --ablation_name "${ABLATION_NAME}" \
+              2>&1 | tee -a "${LOG_DIR}/multitask_${ANATOMY}.log" \
+              || {
+                log "ERROR: training failed for ${ANATOMY} (exit code $?)"
+                exit 1
+              }
 
-          # ── thorax ─────────────────────────────────────────────────────────
-          echo "Starting thorax at $(date)" >> ${MASTER_LOG}
+            log "Finished training: ${ANATOMY}"
+          done
 
-          python train/train_multitask.py \
-            --anatomy       thorax \
-            --data_root     /data/Task1 \
-            --split_dir     /data/splits \
-            --config        configs/base_config.json \
-            --output_dir    /data/results \
-            --ablation_name ${ABLATION_NAME} \
-            >> ${LOG_DIR}/multitask_thorax.log 2>&1
+          log "========================================"
+          log "All three anatomies complete. Job done."
 
-          echo "thorax finished at $(date)" >> ${MASTER_LOG}
-
-          # ── abdomen ────────────────────────────────────────────────────────
-          echo "Starting abdomen at $(date)" >> ${MASTER_LOG}
-
-          python train/train_multitask.py \
-            --anatomy       abdomen \
-            --data_root     /data/Task1 \
-            --split_dir     /data/splits \
-            --config        configs/base_config.json \
-            --output_dir    /data/results \
-            --ablation_name ${ABLATION_NAME} \
-            >> ${LOG_DIR}/multitask_abdomen.log 2>&1
-
-          echo "abdomen finished at $(date). All training complete." >> ${MASTER_LOG}
-
+          
         volumeMounts:
         - name: git-volume
           mountPath: /opt/repo
