@@ -7,7 +7,7 @@
 
   "BATCH_SIZE": 2,
 
-  "EPOCHS": 100,
+  "EPOCHS": 50,
 
   "LR": 2e-4,
   "BETA1": 0.5,
@@ -32,7 +32,7 @@
 
   "CHECKPOINT_FREQ": 10,
 
-  "DECAY_EPOCH": 50,
+  "DECAY_EPOCH": 25,
 
   "MR2CT_SSIM_FLOOR": 0.82,
   "CT2MR_SSIM_FLOOR": 0.75,
