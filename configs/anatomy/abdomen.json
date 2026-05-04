@@ -1,0 +1,12 @@
+{
+  "num_classes": 6,
+  "organ_names": [
+    "background",
+    "liver",
+    "kidney_L",
+    "kidney_R",
+    "spleen",
+    "pancreas"
+  ],
+  "SEG_WARMUP_EPOCHS": 10
+}

@@ -1,0 +1,12 @@
+{
+  "num_classes": 6,
+  "organ_names": [
+    "background",
+    "lung_L",
+    "lung_R",
+    "heart",
+    "spinal_cord",
+    "esophagus"
+  ],
+  "SEG_WARMUP_EPOCHS": 5
+}

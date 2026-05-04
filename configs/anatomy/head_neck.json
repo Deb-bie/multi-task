@@ -1,0 +1,12 @@
+{
+  "num_classes": 6,
+  "organ_names": [
+    "background",
+    "brainstem",
+    "parotid_L",
+    "parotid_R",
+    "mandible",
+    "spinal_cord"
+  ],
+  "SEG_WARMUP_EPOCHS": 5
+}
