@@ -34,8 +34,8 @@ from __future__ import annotations
 import math
 from typing import List
 
-import torch # type: ignore
-import torch.nn.functional as F # type: ignore
+import torch
+import torch.nn.functional as F
 
 # ---------------------------------------------------------------------------
 # HU conversion constants (CT normalisation: HU_min=-1000, HU_max=3000)

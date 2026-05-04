@@ -8,7 +8,7 @@ Provides:
 
 2.5D slice convention
 ----------------------
-For each axial slice index z, three adjacent slices are stacked as channels:
+For each axial slice index *z*, three adjacent slices are stacked as channels:
     [z-1, z, z+1]  →  shape (3, H, W)
 Boundary slices replicate the nearest valid slice:
     z = 0    →  [0, 0, 1]
@@ -49,15 +49,15 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np # type: ignore
-import torch # type: ignore
-from torch.utils.data import DataLoader, Dataset # type: ignore
+import numpy as np
+import torch
+from torch.utils.data import DataLoader, Dataset
 
 # ---------------------------------------------------------------------------
 # Optional resizing (scipy used only when the native slice size ≠ image_size)
 # ---------------------------------------------------------------------------
 try:
-    from scipy.ndimage import zoom as _scipy_zoom # type: ignore
+    from scipy.ndimage import zoom as _scipy_zoom
     _HAVE_SCIPY = True
 except ImportError:
     _HAVE_SCIPY = False
@@ -336,7 +336,6 @@ class SynthRADSliceDataset(Dataset):
         mr_arr,   _ = _load_nifti(Path(entry["mr_path"]))
         ct_arr,   _ = _load_nifti(Path(entry["ct_path"]))
         mask_arr, _ = _load_nifti(Path(entry["mask_path"]))
-        seg_arr,  _ = _load_nifti(Path(entry["seg_path"]))
 
         # Binarise mask before normalisation (some masks are stored as floats)
         mask_bin = (mask_arr > 0.5).astype(np.float32)
@@ -345,7 +344,15 @@ class SynthRADSliceDataset(Dataset):
         mr_norm  = _normalize_mr(mr_arr,  mask_bin)
         ct_norm  = _normalize_ct(ct_arr)
 
-        seg_int  = seg_arr.astype(np.int64)
+        # Seg labels are optional — produced by TotalSegmentator + merge step.
+        # If not yet available, return all-zeros (background only); the seg
+        # loss will be masked out to zero for these slices in the training loop.
+        seg_path = entry.get("seg_path")
+        if seg_path is not None:
+            seg_arr, _ = _load_nifti(Path(seg_path))
+            seg_int = seg_arr.astype(np.int64)
+        else:
+            seg_int = np.zeros_like(ct_arr, dtype=np.int64)
 
         vol = {
             "mr":   mr_norm,

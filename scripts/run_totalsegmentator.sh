@@ -130,11 +130,11 @@ if [[ ! -d "${ANAT_DATA_DIR}" ]]; then
     exit 1
 fi
 
-# Collect all patient CT paths
-mapfile -t CT_PATHS < <(find "${ANAT_DATA_DIR}" -name "ct.nii.gz" | sort)
+# Collect all patient CT paths — SynthRAD2025 uses .mha format
+mapfile -t CT_PATHS < <(find "${ANAT_DATA_DIR}" -name "ct.mha" | sort)
 
 if [[ ${#CT_PATHS[@]} -eq 0 ]]; then
-    log "[ERROR] No ct.nii.gz files found under ${ANAT_DATA_DIR}"
+    log "[ERROR] No ct.mha files found under ${ANAT_DATA_DIR}"
     exit 1
 fi
 

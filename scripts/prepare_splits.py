@@ -31,7 +31,7 @@ Output
 Usage
 -----
     python scripts/prepare_splits.py \\
-        --data_root /data/Task1/Task1 \\
+        --data_root /data/Task1 \\
         --anatomy   head_neck \\
         --split_dir splits/ \\
         --seed      42
@@ -39,13 +39,13 @@ Usage
     # When the on-disk directory name differs from the anatomy label
     # (e.g. SynthRAD2025 uses HN / TH / AB), pass --data_dir explicitly:
     python scripts/prepare_splits.py \\
-        --data_dir  /data/Task1/Task1/HN \\
+        --data_dir  /data/Task1/HN \\
         --anatomy   head_neck \\
         --split_dir splits/ \\
         --seed      42
 
     # Or via environment variables:
-    DATA_ROOT=/data/Task1/Task1 ANATOMY=thorax python scripts/prepare_splits.py
+    DATA_ROOT=/data/Task1 ANATOMY=thorax python scripts/prepare_splits.py
 
 All of DATA_ROOT, ANATOMY, SPLIT_DIR, and SEED may also be passed as
 environment variables (command-line arguments take precedence).
@@ -66,12 +66,19 @@ from typing import Any, Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 # Expected file names within each patient directory
 # ---------------------------------------------------------------------------
+# SynthRAD2025 stores MR, CT, and body-mask in MetaImage (.mha) format.
+# Segmentation labels (seg.nii.gz) are produced separately by TotalSegmentator
+# + merge_seg_labels.py and are treated as optional here — patients without a
+# seg file are still included in the split (seg_path will be null) so that
+# synthesis training can proceed while segmentation labels are being generated.
 _REQUIRED_FILES: List[str] = [
-    "mr.nii.gz",
-    "ct.nii.gz",
-    "seg.nii.gz",
-    "mask.nii.gz",
+    "mr.mha",
+    "ct.mha",
+    "mask.mha",
 ]
+
+# Searched in order; first match wins.  Set to [] to skip seg entirely.
+_SEG_CANDIDATES: List[str] = ["seg.nii.gz", "seg.mha"]
 
 # Split ratios (must sum to 1.0)
 _TRAIN_RATIO: float = 0.70
@@ -92,7 +99,7 @@ def _discover_patients(
     Directories where any file is missing are excluded and logged.
 
     Args:
-        anat_dir: Direct path to the anatomy directory (e.g. /data/Task1/Task1/HN).
+        anat_dir: Direct path to the anatomy directory (e.g. /data/Task1/HN).
 
     Returns:
         Tuple ``(valid_entries, missing_entries)`` where each entry in
@@ -110,23 +117,42 @@ def _discover_patients(
 
     valid: List[Dict[str, Any]] = []
     missing: List[str] = []
+    no_seg: List[str] = []
 
     for pdir in patient_dirs:
         pid = pdir.name
-        paths = {
-            "patient_id": pid,
-            "mr_path":   str(pdir / "mr.nii.gz"),
-            "ct_path":   str(pdir / "ct.nii.gz"),
-            "seg_path":  str(pdir / "seg.nii.gz"),
-            "mask_path": str(pdir / "mask.nii.gz"),
-        }
 
-        # Verify all four files exist
+        # Check required files (.mha)
         absent = [f for f in _REQUIRED_FILES if not (pdir / f).exists()]
         if absent:
             missing.append(f"{pid}: missing {absent}")
-        else:
-            valid.append(paths)
+            continue
+
+        # Find seg file (optional — first candidate that exists wins)
+        seg_path: Optional[str] = None
+        for candidate in _SEG_CANDIDATES:
+            if (pdir / candidate).exists():
+                seg_path = str(pdir / candidate)
+                break
+        if seg_path is None:
+            no_seg.append(pid)
+
+        valid.append({
+            "patient_id": pid,
+            "mr_path":    str(pdir / "mr.mha"),
+            "ct_path":    str(pdir / "ct.mha"),
+            "mask_path":  str(pdir / "mask.mha"),
+            "seg_path":   seg_path,   # None if not yet generated
+        })
+
+    if no_seg:
+        print(
+            f"\n[INFO] {len(no_seg)} patient(s) have no seg file yet "
+            f"(seg_path=null in split JSON). "
+            f"Run scripts/run_totalsegmentator.sh then "
+            f"scripts/merge_seg_labels.py to generate them.\n"
+            f"  First few: {no_seg[:5]}"
+        )
 
     return valid, missing
 
