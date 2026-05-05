@@ -9,6 +9,9 @@
     "spinal_cord",
     "esophagus"
   ],
+
+  "_memory_note": "RTX 2080 Ti = 11 GB VRAM. Thorax volumes are large (full lung fields). Gradient checkpointing on shared encoder res_blocks saves ~1.5–2 GB; perceptual loss kept at base value of 1.",
+
   "SEG_WARMUP_EPOCHS": 5,
 
   "_note_class_weights": "Median-frequency balancing. Approx voxel fractions: lung_L~18%, lung_R~18%, heart~8%, spinal_cord~1%, esophagus~0.3%. Run scripts/compute_class_weights.py to recompute from your training split.",

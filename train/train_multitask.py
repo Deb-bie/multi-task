@@ -160,9 +160,15 @@ def build_losses(
         if raw_w is not None:
             class_weights = torch.tensor(raw_w, dtype=torch.float32, device=device)
 
+    # Only instantiate VGG16 when the perceptual loss will actually be used.
+    # When LAMBDA_PERCEPTUAL=0 (e.g. thorax memory budget), skipping this
+    # saves ~550 MB of VRAM and avoids the checkpoint download entirely.
+    lambda_perc = config.get("LAMBDA_PERCEPTUAL", 1) if config is not None else 1
+    perc_loss = PerceptualLoss().to(device) if lambda_perc > 0 else None
+
     return {
         "gan":        GANLoss().to(device),
-        "perceptual": PerceptualLoss().to(device),
+        "perceptual": perc_loss,
         "seg":        SegLoss(class_weights=class_weights).to(device),
         "anatomy":    AnatomyConsistencyLoss().to(device),
     }
@@ -286,10 +292,15 @@ def train_step(
         # VGG16 feature differences are meaningful even for CT (out-of-
         # distribution for ImageNet), providing structural regularisation
         # for both decoders equally.
-        L_perc = (
-            perc_loss(outs["fake_CT"], real_CT, mask)   # MRI→CT direction
-            + perc_loss(outs["fake_MR"], real_MR, mask) # CT→MRI direction
-        ) * config["LAMBDA_PERCEPTUAL"]
+        # perc_loss is None when LAMBDA_PERCEPTUAL=0 (e.g. thorax memory
+        # budget), in which case we skip VGG entirely.
+        if perc_loss is not None and config["LAMBDA_PERCEPTUAL"] > 0:
+            L_perc = (
+                perc_loss(outs["fake_CT"], real_CT, mask)   # MRI→CT direction
+                + perc_loss(outs["fake_MR"], real_MR, mask) # CT→MRI direction
+            ) * config["LAMBDA_PERCEPTUAL"]
+        else:
+            L_perc = torch.zeros(1, device=device)
 
         # (f) Segmentation (warmup-weighted, foreground-masked) ───────────
         # Main loss on real MRI using TotalSegmentator labels in MRI space.
