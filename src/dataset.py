@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import random
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -260,6 +261,7 @@ class SynthRADSliceDataset(Dataset):
         split:            str,
         image_size:       int = 256,
         min_mask_voxels:  int = 200,
+        max_cache_patients: int = 4,
     ) -> None:
         super().__init__()
         self.entries         = entries
@@ -269,9 +271,14 @@ class SynthRADSliceDataset(Dataset):
         self.min_mask_voxels = min_mask_voxels
         self.augment         = (split == "train")
 
-        # Per-worker volume cache: populated lazily in __getitem__
-        # Each DataLoader worker forks and gets its own copy of this dict.
-        self._cache: Dict[int, Dict[str, np.ndarray]] = {}
+        # Per-worker LRU volume cache with a hard patient cap.
+        # Without a cap the cache grows to hold every patient a worker ever
+        # touches — for large-volume anatomies (thorax) this causes the
+        # container to be OOMKilled by the kernel before a single epoch ends.
+        # Each entry is ~1.5–2 GB (MR + CT + mask + seg at native resolution),
+        # so max_cache_patients=4 keeps each worker under ~8 GB of RAM.
+        self._max_cache  = max_cache_patients
+        self._cache: OrderedDict[int, Dict[str, np.ndarray]] = OrderedDict()
 
         # Build flat slice index using metadata-only Z reads
         self.index: List[Tuple[int, int]] = []
@@ -329,6 +336,8 @@ class SynthRADSliceDataset(Dataset):
             normalised float32 arrays of shape ``(Z, H, W)``.
         """
         if entry_idx in self._cache:
+            # Move to end to mark as most-recently used
+            self._cache.move_to_end(entry_idx)
             return self._cache[entry_idx]
 
         entry = self.entries[entry_idx]
@@ -360,7 +369,10 @@ class SynthRADSliceDataset(Dataset):
             "mask": mask_bin,
             "seg":  seg_int,
         }
+        # Evict the least-recently-used patient if over the cap
         self._cache[entry_idx] = vol
+        while len(self._cache) > self._max_cache:
+            self._cache.popitem(last=False)  # remove oldest entry
         return vol
 
     # ------------------------------------------------------------------

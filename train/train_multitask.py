@@ -902,4 +902,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys, traceback
+    try:
+        main()
+    except Exception:
+        # Print full traceback and flush immediately so it appears in kubectl
+        # logs even when stdout/stderr are piped (buffered by default).
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.exit(1)

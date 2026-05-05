@@ -10,7 +10,9 @@
     "esophagus"
   ],
 
-  "_memory_note": "RTX 2080 Ti = 11 GB VRAM. Thorax volumes are large (full lung fields). Gradient checkpointing on shared encoder res_blocks saves ~1.5–2 GB; perceptual loss kept at base value of 1.",
+  "_memory_note": "OOMKilled at container level (CPU RAM). Thorax .mha volumes are large (~400MB each). Reducing NUM_WORKERS limits concurrent volume loading by dataloader workers. BATCH_SIZE 1 halves activation memory as secondary guard.",
+  "NUM_WORKERS": 1,
+  "BATCH_SIZE": 1,
 
   "SEG_WARMUP_EPOCHS": 5,
 
