@@ -104,6 +104,7 @@ class PerceptualLoss(nn.Module):
     # Forward
     # ------------------------------------------------------------------
 
+    @torch.cuda.amp.custom_fwd(cast_inputs=torch.float32)
     def forward(
         self,
         pred: torch.Tensor,

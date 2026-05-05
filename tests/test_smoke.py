@@ -316,13 +316,14 @@ class TestValidate:
         metrics = validate(model, _DictLoader(real_batch), DEVICE, num_classes=NC)
 
         required = {
-            "mr2ct_ssim", "ct2mr_ssim",
-            "mr2ct_mae",  "ct2mr_mae",
-            "mr2ct_psnr", "ct2mr_psnr",
-            "mean_dice",
-            "ct_seg_mean_dice",
-            "dice_class_1",
-            "ct_seg_class_1",
+            "mr2ct_ssim",  "ct2mr_ssim",
+            "mr2ct_mae",   "ct2mr_mae",
+            "mr2ct_psnr",  "ct2mr_psnr",
+            "mr2ct_rmse",  "ct2mr_rmse",
+            "mean_dice",   "mean_iou",
+            "ct_seg_mean_dice", "ct_seg_mean_iou",
+            "dice_class_1",     "iou_class_1",
+            "ct_seg_class_1",   "ct_seg_iou_class_1",
         }
         for key in required:
             assert key in metrics, f"validate() missing key: {key}"
@@ -337,4 +338,6 @@ class TestValidate:
 
         metrics = validate(model, _DictLoader(real_batch), DEVICE, num_classes=NC)
         assert metrics["mean_dice"] >= 0.0
+        assert metrics["mean_iou"]  >= 0.0
         assert metrics["ct_seg_mean_dice"] >= 0.0
+        assert metrics["ct_seg_mean_iou"]  >= 0.0

@@ -35,7 +35,7 @@ class GANLoss(nn.Module):
         loss_D = 0.5 * (criterion(D(real), True) + criterion(D(fake.detach()), False))
     """
 
-    def __init__(self, real_label: float = 1.0, fake_label: float = 0.0) -> None:
+    def __init__(self, real_label: float = 0.9, fake_label: float = 0.0) -> None:
         super().__init__()
         self.register_buffer("real_label", torch.tensor(real_label))
         self.register_buffer("fake_label", torch.tensor(fake_label))

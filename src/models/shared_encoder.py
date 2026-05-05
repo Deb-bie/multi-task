@@ -1,7 +1,7 @@
 """
 Shared encoder for the multi-task CycleGAN framework.
 
-The encoder is used by both synthesis decoders (G and F) and the
+The encoder is used by **both** synthesis decoders (G and F) and the
 segmentation decoder (S), allowing the three tasks to share low-level
 and mid-level feature representations.
 
@@ -19,8 +19,8 @@ them immediately after calling the encoder.
 
 from __future__ import annotations
 
-import torch # type: ignore
-import torch.nn as nn # type: ignore
+import torch
+import torch.nn as nn
 
 
 # ---------------------------------------------------------------------------

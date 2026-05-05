@@ -32,8 +32,9 @@ CSVs and summary tables report MAE in HU.
 from __future__ import annotations
 
 import math
-from typing import List
+from typing import List, Optional
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -144,6 +145,39 @@ def masked_psnr(
 # masked_mae  (returns HU-equivalent for CT; raw [-1,1] for MRI)
 # ---------------------------------------------------------------------------
 
+def masked_rmse(
+    pred:   torch.Tensor,
+    target: torch.Tensor,
+    mask:   torch.Tensor,
+    is_ct:  bool = True,
+) -> float:
+    """Root-mean-square error over foreground pixels.
+
+    When *is_ct* is ``True``, both tensors are first converted from [-1, 1]
+    to Hounsfield Units so the returned value is in **HU**.
+
+    Args:
+        pred:   Predicted image, shape ``(B, C, H, W)``, range ``[-1, 1]``.
+        target: Ground-truth image, same shape as *pred*.
+        mask:   Binary foreground mask, broadcastable to ``(B, 1, H, W)``.
+        is_ct:  If ``True``, convert to HU before computing RMSE.
+
+    Returns:
+        Foreground RMSE (HU if ``is_ct=True``, normalised if ``is_ct=False``).
+    """
+    if mask.dim() == 3:
+        mask = mask.unsqueeze(1)
+    mask = mask.to(pred.dtype).expand_as(pred)
+
+    if is_ct:
+        pred   = _to_hu(pred)
+        target = _to_hu(target)
+
+    sq_diff = ((pred - target) ** 2) * mask
+    fg_sum  = mask.sum().clamp(min=1.0)
+    return float(torch.sqrt(sq_diff.sum() / fg_sum))
+
+
 def masked_mae(
     pred:       torch.Tensor,
     target:     torch.Tensor,
@@ -231,6 +265,144 @@ def dice_per_class(
         scores.append(float(dice_per_sample.mean()))
 
     return scores
+
+
+# ---------------------------------------------------------------------------
+# iou_per_class
+# ---------------------------------------------------------------------------
+
+def iou_per_class(
+    pred_logits:   torch.Tensor,
+    target_labels: torch.Tensor,
+    num_classes:   int   = 6,
+    smooth:        float = 1e-5,
+) -> List[float]:
+    """Compute mean IoU (Jaccard index) per foreground class across a batch.
+
+    Background (class 0) is **excluded** from the returned list.
+    IoU and Dice are monotonically related: ``IoU = Dice / (2 - Dice)``.
+    IoU is numerically lower than Dice and is the standard metric in
+    segmentation benchmarks (PASCAL VOC, COCO, nnU-Net leaderboards).
+
+    Args:
+        pred_logits:   Raw logits, shape ``(B, C, H, W)``.
+        target_labels: Integer ground-truth labels, shape ``(B, H, W)``.
+        num_classes:   Total number of classes including background.
+        smooth:        Laplace smoothing term to avoid division by zero.
+
+    Returns:
+        List of ``num_classes - 1`` floats — mean IoU per foreground class
+        (classes 1 … ``num_classes - 1``) averaged over the batch.
+        Vacuous IoU (both pred and target absent) = 1.0, consistent with
+        nnU-Net convention.
+    """
+    B = pred_logits.shape[0]
+    pred_hard = pred_logits.argmax(dim=1)   # (B, H, W)
+
+    scores: List[float] = []
+    for cls in range(1, num_classes):
+        pred_bin   = (pred_hard    == cls).float()
+        target_bin = (target_labels == cls).float()
+
+        inter = (pred_bin * target_bin).sum(dim=(1, 2))          # (B,)
+        union = pred_bin.sum(dim=(1, 2)) + target_bin.sum(dim=(1, 2)) - inter  # (B,)
+
+        iou_per_sample = torch.where(
+            union > 0,
+            (inter + smooth) / (union + smooth),
+            torch.ones_like(inter),   # vacuous IoU = 1.0
+        )
+        scores.append(float(iou_per_sample.mean()))
+
+    return scores
+
+
+# ---------------------------------------------------------------------------
+# hd95_per_class  (test-time only — too slow for per-epoch validation)
+# ---------------------------------------------------------------------------
+
+def hd95_per_class(
+    pred_logits:   torch.Tensor,
+    target_labels: torch.Tensor,
+    num_classes:   int = 6,
+    voxel_spacing: float = 1.0,
+) -> List[Optional[float]]:
+    """95th-percentile Hausdorff Distance per foreground class.
+
+    Measures boundary accuracy in physical units (mm if *voxel_spacing* is in
+    mm).  HD95 is preferred over plain HD because it is robust to single
+    outlier voxels.
+
+    **This function operates on CPU numpy arrays via scipy and is intended for
+    test-time evaluation only.**  Do not call it inside the per-epoch
+    validation loop — use :func:`iou_per_class` and :func:`dice_per_class`
+    there instead.
+
+    Args:
+        pred_logits:   Raw logits, shape ``(B, C, H, W)``.  Converted to
+                       hard predictions internally.
+        target_labels: Integer ground-truth labels, shape ``(B, H, W)``.
+        num_classes:   Total number of classes including background.
+        voxel_spacing: Isotropic voxel size in mm (default 1.0 = pixel units).
+
+    Returns:
+        List of ``num_classes - 1`` values — mean HD95 per foreground class
+        across the batch, in units of *voxel_spacing*.  Returns ``None`` for
+        classes that are absent from **both** prediction and target in every
+        image in the batch (vacuous case).
+    """
+    try:
+        from scipy.ndimage import distance_transform_edt
+    except ImportError as exc:
+        raise ImportError(
+            "scipy is required for hd95_per_class. "
+            "Install with: pip install scipy"
+        ) from exc
+
+    pred_np   = pred_logits.argmax(dim=1).cpu().numpy()   # (B, H, W)
+    target_np = target_labels.cpu().numpy()                # (B, H, W)
+    B = pred_np.shape[0]
+
+    results: List[Optional[float]] = []
+
+    for cls in range(1, num_classes):
+        batch_hd95: List[float] = []
+
+        for b in range(B):
+            pred_bin   = (pred_np[b]   == cls).astype(np.uint8)
+            target_bin = (target_np[b] == cls).astype(np.uint8)
+
+            # Skip if both are empty (vacuous case)
+            if pred_bin.sum() == 0 and target_bin.sum() == 0:
+                continue
+
+            # If only one is empty, HD95 = max possible distance (penalty)
+            if pred_bin.sum() == 0 or target_bin.sum() == 0:
+                h, w = pred_bin.shape
+                batch_hd95.append(float(np.sqrt(h ** 2 + w ** 2)) * voxel_spacing)
+                continue
+
+            # Distance from each pred-surface voxel to nearest target voxel
+            dist_target = distance_transform_edt(1 - target_bin) * voxel_spacing
+            dist_pred   = distance_transform_edt(1 - pred_bin)   * voxel_spacing
+
+            # Surface voxels = foreground pixels adjacent to background
+            pred_surface   = pred_bin   & (distance_transform_edt(pred_bin)   == 1)
+            target_surface = target_bin & (distance_transform_edt(target_bin) == 1)
+
+            # Directed distances
+            d_p2t = dist_target[pred_surface   > 0]
+            d_t2p = dist_pred  [target_surface > 0]
+
+            if len(d_p2t) == 0 or len(d_t2p) == 0:
+                continue
+
+            all_d = np.concatenate([d_p2t, d_t2p])
+            batch_hd95.append(float(np.percentile(all_d, 95)))
+
+        results.append(float(np.mean(batch_hd95)) if batch_hd95 else None)
+
+    return results
 
 
 # ---------------------------------------------------------------------------

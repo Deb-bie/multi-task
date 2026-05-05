@@ -709,7 +709,7 @@ def main() -> None:
     )
     opt_D = optim.Adam(
         model.discriminator_parameters(),
-        lr=config["LR"],
+        lr=config.get("LR_D", config["LR"] * 0.5),
         betas=(config["BETA1"], config["BETA2"]),
     )
 
@@ -803,10 +803,26 @@ def main() -> None:
             f"G={mean_losses.get('loss_G_total', 0):.4f}  "
             f"D={mean_losses.get('loss_D_total', 0):.4f}  "
             f"seg={mean_losses.get('loss_seg', 0):.4f}  "
-            f"MR→CT={val_metrics['mr2ct_ssim']:.4f}  "
-            f"CT→MR={val_metrics['ct2mr_ssim']:.4f}  "
-            f"Dice={val_metrics['mean_dice']:.4f}  "
             f"skipped={skipped}"
+        )
+        print(
+            f"  synthesis  "
+            f"MR→CT  SSIM={val_metrics['mr2ct_ssim']:.4f}  "
+            f"MAE={val_metrics['mr2ct_mae']:.4f}  "
+            f"PSNR={val_metrics['mr2ct_psnr']:.2f}dB  "
+            f"RMSE={val_metrics['mr2ct_rmse']:.4f}"
+        )
+        print(
+            f"             "
+            f"CT→MR  SSIM={val_metrics['ct2mr_ssim']:.4f}  "
+            f"MAE={val_metrics['ct2mr_mae']:.4f}  "
+            f"PSNR={val_metrics['ct2mr_psnr']:.2f}dB  "
+            f"RMSE={val_metrics['ct2mr_rmse']:.4f}"
+        )
+        print(
+            f"  seg        "
+            f"Dice={val_metrics['mean_dice']:.4f}  "
+            f"IoU={val_metrics['mean_iou']:.4f}"
         )
 
         # ── Periodic checkpoint (every CHECKPOINT_FREQ epochs) ────────────

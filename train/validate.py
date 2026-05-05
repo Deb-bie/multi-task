@@ -105,6 +105,63 @@ def _masked_psnr(
     return psnr.item()
 
 
+def _masked_rmse(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+) -> float:
+    """Root-mean-square error over foreground pixels (normalised units).
+
+    Args:
+        pred:   ``(B, 3, H, W)`` predicted image.
+        target: ``(B, 3, H, W)`` ground-truth image.
+        mask:   ``(B, 1, H, W)`` binary mask.
+
+    Returns:
+        Scalar masked RMSE in the same units as the input (normalised [-1, 1]).
+    """
+    fg = mask.float().expand_as(pred)
+    n_fg = fg.sum().clamp(min=1.0)
+    mse = (((pred - target) ** 2) * fg).sum() / n_fg
+    return float(torch.sqrt(mse))
+
+
+def _iou_per_class(
+    pred_logits: torch.Tensor,
+    targets: torch.Tensor,
+    num_classes: int,
+    smooth: float = 1e-5,
+) -> list[float]:
+    """IoU (Jaccard index) per foreground class (background class 0 excluded).
+
+    ``IoU_c = intersection_c / (pred_c + target_c - intersection_c)``
+
+    Args:
+        pred_logits: Raw segmentation logits ``(B, C, H, W)``.
+        targets:     Integer class labels ``(B, H, W)`` in ``[0, C)``.
+        num_classes: Total number of classes including background.
+        smooth:      Laplace smoothing (default 1e-5).
+
+    Returns:
+        List of ``num_classes - 1`` IoU scores for classes 1 … num_classes-1.
+        Vacuous IoU (both pred and target absent) = 1.0.
+    """
+    pred_cls = pred_logits.argmax(dim=1)
+
+    iou_scores: list[float] = []
+    for c in range(1, num_classes):
+        pred_c   = (pred_cls == c).float()
+        target_c = (targets  == c).float()
+        inter    = (pred_c * target_c).sum()
+        union    = pred_c.sum() + target_c.sum() - inter
+        if union < smooth:
+            iou_scores.append(1.0)
+        else:
+            iou_scores.append(((inter + smooth) / (union + smooth)).item())
+
+    return iou_scores
+
+
 def _dice_per_class(
     pred_logits: torch.Tensor,
     targets: torch.Tensor,
@@ -178,30 +235,32 @@ def validate(
 
         Synthesis metrics (masked, foreground only):
             ``mr2ct_ssim``, ``ct2mr_ssim`` – mean SSIM (data_range=2.0)
-            ``mr2ct_mae``,  ``ct2mr_mae``  – mean MAE
+            ``mr2ct_mae``,  ``ct2mr_mae``  – mean MAE (normalised units)
             ``mr2ct_psnr``, ``ct2mr_psnr`` – mean PSNR (dB)
+            ``mr2ct_rmse``, ``ct2mr_rmse`` – RMSE (normalised units)
 
         Segmentation metrics (MRI branch — primary, GT-supervised):
             ``mean_dice``        – mean Dice across foreground classes (bg excluded)
             ``dice_per_class``   – list of per-class Dice, length num_classes-1
-                                   (background excluded; index 0 = class 1)
-            ``dice_class_{i}``   – individual Dice for class ``i`` (1-indexed,
-                                   matching test CSV convention; for CSV logging)
+            ``dice_class_{i}``   – per-class Dice (1-indexed) for CSV logging
+            ``mean_iou``         – mean IoU (Jaccard) across foreground classes
+            ``iou_per_class``    – list of per-class IoU, length num_classes-1
+            ``iou_class_{i}``    – per-class IoU (1-indexed) for CSV logging
 
         Segmentation metrics (CT branch — diagnostic, cross-modal proxy):
-            ``ct_seg_mean_dice`` – mean Dice of seg_real_CT vs the MRI-space GT
-                                   labels.  Measures how well the shared encoder
-                                   generalises to CT without direct CT supervision.
-                                   Low values here indicate that the CT→MRI anatomy
-                                   consistency loss is working from a weak signal.
-            ``ct_seg_class_{i}`` – per-class CT-branch Dice (1-indexed).
+            ``ct_seg_mean_dice``      – CT-branch mean Dice vs MRI-space GT
+            ``ct_seg_class_{i}``      – CT-branch per-class Dice (1-indexed)
+            ``ct_seg_mean_iou``       – CT-branch mean IoU vs MRI-space GT
+            ``ct_seg_iou_class_{i}``  – CT-branch per-class IoU (1-indexed)
     """
     model.eval()
 
     accum: dict[str, list[float]] = defaultdict(list)
-    # Per-class Dice accumulators (background excluded, length = num_classes-1)
-    class_dice_accum:    list[list[float]] = []   # MRI branch
-    ct_class_dice_accum: list[list[float]] = []   # CT  branch
+    # Per-class accumulators (background excluded, length = num_classes-1)
+    class_dice_accum:    list[list[float]] = []   # MRI branch Dice
+    ct_class_dice_accum: list[list[float]] = []   # CT  branch Dice
+    class_iou_accum:     list[list[float]] = []   # MRI branch IoU
+    ct_class_iou_accum:  list[list[float]] = []   # CT  branch IoU
 
     with torch.no_grad():
         for batch in val_loader:
@@ -230,6 +289,8 @@ def validate(
             accum["ct2mr_psnr"].append(
                 _masked_psnr(fake_MR, real_MR, mask, data_range=2.0)
             )
+            accum["mr2ct_rmse"].append(_masked_rmse(fake_CT, real_CT, mask))
+            accum["ct2mr_rmse"].append(_masked_rmse(fake_MR, real_MR, mask))
 
             # ── MRI segmentation (primary — GT-supervised) ────────────
             mr_per_class = _dice_per_class(
@@ -237,17 +298,21 @@ def validate(
             )
             class_dice_accum.append(mr_per_class)
 
+            mr_iou_per_class = _iou_per_class(
+                outs["seg_real_MR"], seg_labels, num_classes
+            )
+            class_iou_accum.append(mr_iou_per_class)
+
             # ── CT segmentation (diagnostic — cross-modal proxy) ──────
-            # Evaluated against MRI-space GT labels.  No direct CT ground
-            # truth exists in the default pipeline, so this measures the
-            # shared encoder's cross-modal generalisation quality, which
-            # determines the strength of the CT→MRI anatomy consistency
-            # signal.  Track over epochs: should improve as training
-            # progresses even without direct CT supervision.
             ct_per_class = _dice_per_class(
                 outs["seg_real_CT"], seg_labels, num_classes
             )
             ct_class_dice_accum.append(ct_per_class)
+
+            ct_iou_per_class = _iou_per_class(
+                outs["seg_real_CT"], seg_labels, num_classes
+            )
+            ct_class_iou_accum.append(ct_iou_per_class)
 
     model.train()
 
@@ -255,29 +320,41 @@ def validate(
     result: dict[str, Any] = {k: float(np.mean(v)) for k, v in accum.items()}
 
     # ── MRI segmentation metrics ──────────────────────────────────────────
-    # Shape: (num_batches, num_classes-1) → mean along batch axis
     mr_dice_array  = np.array(class_dice_accum)           # (N, num_classes-1)
-    dice_per_class = mr_dice_array.mean(axis=0).tolist()  # length num_classes-1
-
+    dice_per_class = mr_dice_array.mean(axis=0).tolist()
     mean_dice = float(np.mean(dice_per_class)) if dice_per_class else 0.0
 
     result["mean_dice"]      = mean_dice
     result["dice_per_class"] = dice_per_class
-
-    # 1-indexed flat entries for CSV serialisation (matches test_multitask.py)
     for i, d in enumerate(dice_per_class):
         result[f"dice_class_{i + 1}"] = float(d)
 
-    # ── CT segmentation metrics (diagnostic) ─────────────────────────────
-    ct_dice_array    = np.array(ct_class_dice_accum)          # (N, num_classes-1)
-    ct_dice_per_cls  = ct_dice_array.mean(axis=0).tolist()
+    mr_iou_array  = np.array(class_iou_accum)            # (N, num_classes-1)
+    iou_per_class = mr_iou_array.mean(axis=0).tolist()
+    mean_iou = float(np.mean(iou_per_class)) if iou_per_class else 0.0
 
-    ct_mean_dice = float(np.mean(ct_dice_per_cls)) if ct_dice_per_cls else 0.0
+    result["mean_iou"]      = mean_iou
+    result["iou_per_class"] = iou_per_class
+    for i, v in enumerate(iou_per_class):
+        result[f"iou_class_{i + 1}"] = float(v)
+
+    # ── CT segmentation metrics (diagnostic) ─────────────────────────────
+    ct_dice_array   = np.array(ct_class_dice_accum)
+    ct_dice_per_cls = ct_dice_array.mean(axis=0).tolist()
+    ct_mean_dice    = float(np.mean(ct_dice_per_cls)) if ct_dice_per_cls else 0.0
 
     result["ct_seg_mean_dice"] = ct_mean_dice
     result["ct_seg_per_class"] = ct_dice_per_cls
-
     for i, d in enumerate(ct_dice_per_cls):
         result[f"ct_seg_class_{i + 1}"] = float(d)
+
+    ct_iou_array   = np.array(ct_class_iou_accum)
+    ct_iou_per_cls = ct_iou_array.mean(axis=0).tolist()
+    ct_mean_iou    = float(np.mean(ct_iou_per_cls)) if ct_iou_per_cls else 0.0
+
+    result["ct_seg_mean_iou"] = ct_mean_iou
+    result["ct_seg_iou_per_class"] = ct_iou_per_cls
+    for i, v in enumerate(ct_iou_per_cls):
+        result[f"ct_seg_iou_class_{i + 1}"] = float(v)
 
     return result
