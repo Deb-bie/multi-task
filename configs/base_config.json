@@ -5,7 +5,7 @@
 
   "IMAGE_SIZE": 256,
 
-  "BATCH_SIZE": 2,
+  "BATCH_SIZE": 1,
 
   "EPOCHS": 50,
 
@@ -20,7 +20,7 @@
   "LAMBDA_PAIRED_MR2CT":  10,
   "LAMBDA_PAIRED_CT2MR":  10,
 
-  "LAMBDA_PERCEPTUAL":     1,
+  "LAMBDA_PERCEPTUAL":     0,
 
   "LAMBDA_SEG":            5,
 
