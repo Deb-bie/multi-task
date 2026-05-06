@@ -10,9 +10,12 @@
     "esophagus"
   ],
 
-  "_memory_note": "OOMKilled at container level (CPU RAM). Thorax .mha volumes are large (~400MB each). Reducing NUM_WORKERS limits concurrent volume loading by dataloader workers. BATCH_SIZE 1 halves activation memory as secondary guard.",
-  "NUM_WORKERS": 1,
-  "BATCH_SIZE": 1,
+  "_memory_note": "OOMKilled root cause was unbounded dataset cache (fixed with LRU cap in dataset.py). BATCH_SIZE=2 is safe again. NUM_WORKERS=2 balances throughput vs RAM. LAMBDA_PERCEPTUAL=0 skips VGG16 for thorax to keep epoch time reasonable (~1.5h vs ~4.4h).",
+  "BATCH_SIZE": 2,
+  "NUM_WORKERS": 2,
+  "LAMBDA_PERCEPTUAL": 0,
+  "EPOCHS": 20,
+  "DECAY_EPOCH": 10,
 
   "SEG_WARMUP_EPOCHS": 5,
 

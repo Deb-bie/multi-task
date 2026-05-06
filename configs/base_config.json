@@ -20,7 +20,7 @@
   "LAMBDA_PAIRED_MR2CT":  10,
   "LAMBDA_PAIRED_CT2MR":  10,
 
-  "LAMBDA_PERCEPTUAL":     0,
+  "LAMBDA_PERCEPTUAL":     1,
 
   "LAMBDA_SEG":            5,
 
