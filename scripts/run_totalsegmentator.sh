@@ -179,9 +179,23 @@ for CT_PATH in "${CT_PATHS[@]}"; do
 
     mkdir -p "${SEG_OUT_DIR}" "${FINAL_SEG_DIR}"
 
+    # ── Convert .mha → .nii.gz (TotalSegmentator requires NIfTI input) ────
+    TMP_CT="/tmp/ct_${PATIENT_ID}.nii.gz"
+    if ! python3 - <<PYEOF 2>> "${LOG_FILE}"
+import SimpleITK as sitk, sys
+img = sitk.ReadImage("${CT_PATH}")
+sitk.WriteImage(img, "${TMP_CT}")
+PYEOF
+    then
+        log "[FAIL] Could not convert ${CT_PATH} to NIfTI — skipping"
+        (( n_fail++ )) || true
+        continue
+    fi
+    log "  Converted ct.mha → ${TMP_CT}"
+
     # ── Run TotalSegmentator ───────────────────────────────────────────────
     if "${TOTALSEG_BIN}" \
-            -i  "${CT_PATH}" \
+            -i  "${TMP_CT}" \
             -o  "${SEG_OUT_DIR}" \
             --fast \
             --task "${TS_TASK}" \
@@ -217,6 +231,9 @@ for CT_PATH in "${CT_PATHS[@]}"; do
         log "[FAIL] TotalSegmentator failed for ${PATIENT_ID} (exit code $?)"
         (( n_fail++ )) || true
     fi
+
+    # ── Clean up temp NIfTI to avoid filling /tmp ──────────────────────────
+    rm -f "${TMP_CT}"
 done
 
 # ── Final summary ─────────────────────────────────────────────────────────────
