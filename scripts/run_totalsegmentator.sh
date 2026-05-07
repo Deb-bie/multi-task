@@ -57,12 +57,17 @@
 set -euo pipefail
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
-DATA_ROOT="${DATA_ROOT:?'DATA_ROOT must be set to the SynthRAD2025 dataset root'}"
 ANATOMY="${ANATOMY:?'ANATOMY must be set to head_neck, thorax, or abdomen'}"
 OUTPUT_DIR="${OUTPUT_DIR:?'OUTPUT_DIR must be set to the segmentation output root'}"
 TOTALSEG_BIN="${TOTALSEG_BIN:-TotalSegmentator}"
 DRY_RUN="${DRY_RUN:-0}"
 N_JOBS="${N_JOBS:-1}"
+
+# DATA_DIR can be set directly (e.g. /data/Task1/Task1/HN) to avoid needing
+# the directory to be named after the anatomy label.
+# If not set, falls back to DATA_ROOT/ANATOMY (original behaviour).
+DATA_DIR="${DATA_DIR:-}"
+DATA_ROOT="${DATA_ROOT:-}"
 
 LOG_DIR="${OUTPUT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/totalsegmentator_${ANATOMY}.log"
@@ -123,7 +128,15 @@ log() {
 }
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
-ANAT_DATA_DIR="${DATA_ROOT}/${ANATOMY}"
+# Resolve anatomy data directory: DATA_DIR takes precedence over DATA_ROOT/ANATOMY
+if [[ -n "${DATA_DIR}" ]]; then
+    ANAT_DATA_DIR="${DATA_DIR}"
+elif [[ -n "${DATA_ROOT}" ]]; then
+    ANAT_DATA_DIR="${DATA_ROOT}/${ANATOMY}"
+else
+    echo "[ERROR] Set either DATA_DIR (direct path to anatomy folder) or DATA_ROOT" >&2
+    exit 1
+fi
 
 if [[ ! -d "${ANAT_DATA_DIR}" ]]; then
     log "[ERROR] Anatomy directory not found: ${ANAT_DATA_DIR}"
