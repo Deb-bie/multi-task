@@ -38,8 +38,8 @@ L_cycle    λ_cyc  · [L1(cyc_MR·m, MR·m) + L1(cyc_CT·m, CT·m)]
 L_identity λ_idt  · [L1(idt_CT·m, CT·m) + L1(idt_MR·m, MR·m)]
 L_paired   λ_p_mc · L1(fCT·m, CT·m) + λ_p_cm · L1(fMR·m, MR·m)
 L_perc     λ_perc · [VGG(fake_CT, real_CT, mask) + VGG(fake_MR, real_MR, mask)]
-L_seg      λ_seg  · seg_weight · SegLoss(seg_real_MR, seg_labels, mask)
-L_anatomy  seg_weight · [λ_anat    · Dice(seg_fake_CT, argmax(seg_real_MR).detach())
+L_seg      λ_seg  · seg_weight · SegLoss(seg_real_CT, seg_labels, mask)
+L_anatomy  seg_weight · [λ_anat    · Dice(seg_fake_CT, argmax(seg_real_CT).detach())
                         + λ_anat_c2m · Dice(seg_fake_MR, argmax(seg_real_CT).detach())]
 
 Discriminator bug fix
@@ -203,8 +203,8 @@ def train_step(
     4. ``L_identity`` identity regularisation (masked L1)
     5. ``L_paired``   paired supervision (masked L1, separate λ per direction)
     6. ``L_perc``     VGG16 perceptual loss on fake_MR (masked, ImageNet-normalised)
-    7. ``L_seg``      segmentation loss on real-MRI features (warmup-weighted)
-    8. ``L_anatomy``  anatomy consistency via pseudo-labels (warmup-weighted)
+    7. ``L_seg``      segmentation loss on real-CT features vs CT-space labels (warmup-weighted)
+    8. ``L_anatomy``  anatomy consistency anchored to seg_real_CT (warmup-weighted)
 
     Discriminator bug fix
     ---------------------
@@ -303,9 +303,10 @@ def train_step(
             L_perc = torch.zeros(1, device=device)
 
         # (f) Segmentation (warmup-weighted, foreground-masked) ───────────
-        # Main loss on real MRI using TotalSegmentator labels in MRI space.
+        # TotalSegmentator labels come from ct.mha → they are in CT space.
+        # Supervise seg_real_CT directly; seg_real_MR learns via anatomy loss.
         L_seg = (
-            seg_loss(outs["seg_real_MR"], seg_labels, mask)
+            seg_loss(outs["seg_real_CT"], seg_labels, mask)
             * config["LAMBDA_SEG"]
             * seg_weight
         )
@@ -316,7 +317,7 @@ def train_step(
         # training.  Targets are downsampled with nearest-neighbour to
         # preserve integer class labels.  Weights decay with depth:
         # aux_128 gets 0.2 × L_seg weight, aux_256 gets 0.4 × L_seg weight.
-        aux_logits_list = outs.get("seg_aux_real_MR", [])
+        aux_logits_list = outs.get("seg_aux_real_CT", [])
         if aux_logits_list:
             ds_weights = config.get("DEEP_SUPERVISION_WEIGHTS", [0.2, 0.4])
             for aux_logits, ds_w in zip(aux_logits_list, ds_weights):
@@ -349,18 +350,18 @@ def train_step(
 
         # (g) Anatomy consistency — both synthesis directions ─────────────
         #
-        # MRI→CT:  seg_fake_CT must match seg_real_MR
-        #   Ensures G produces a CT whose anatomy matches the input MRI.
+        # seg_real_CT is directly supervised by seg_labels (CT-space labels).
+        # Both fake outputs are anchored to it so that:
+        #
+        # MRI→CT:  seg_fake_CT must match seg_real_CT (the supervised branch)
+        #   Ensures G produces a CT whose anatomy matches the labelled CT.
         #
         # CT→MRI:  seg_fake_MR must match seg_real_CT
         #   Ensures F produces an MRI whose anatomy matches the input CT.
-        #   Uses seg_real_CT as pseudo-labels (detached inside anat_loss).
-        #   seg_real_CT has no direct ground-truth supervision in the default
-        #   pipeline; it relies on the shared encoder's cross-modal
-        #   generalisation, and provides an increasingly useful signal as
-        #   training progresses.  Control its influence with LAMBDA_ANATOMY_CT2MR.
+        #   seg_real_MR is left as an unsupervised cross-modal branch that
+        #   learns solely through the GAN / cycle objectives.
         L_anatomy = (
-            anat_loss(outs["seg_fake_CT"], outs["seg_real_MR"], mask)
+            anat_loss(outs["seg_fake_CT"], outs["seg_real_CT"], mask)
             * config["LAMBDA_ANATOMY"]
             * seg_weight
             + anat_loss(outs["seg_fake_MR"], outs["seg_real_CT"], mask)
@@ -700,13 +701,19 @@ def main() -> None:
 
     # ── Data ──────────────────────────────────────────────────────────────
     split_data   = load_split(args.split_dir, args.anatomy)
+    # Slice indices are cached to /data/splits/index_cache/ so rebuilding on
+    # restart is instant instead of reading hundreds of .mha headers again.
+    index_cache_dir = str(Path(args.split_dir) / "index_cache")
+
     train_loader = make_dataloader(
         split_data["train"], args.anatomy, args.data_root, "train",
         config["BATCH_SIZE"], config["NUM_WORKERS"], config["IMAGE_SIZE"],
+        index_cache_dir=index_cache_dir,
     )
     val_loader = make_dataloader(
         split_data["val"], args.anatomy, args.data_root, "val",
         config["BATCH_SIZE"], config["NUM_WORKERS"], config["IMAGE_SIZE"],
+        index_cache_dir=index_cache_dir,
     )
 
     # ── Model ──────────────────────────────────────────────────────────────
