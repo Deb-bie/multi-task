@@ -96,7 +96,8 @@ case "${ANATOMY}" in
             [mandible]=mandible
             [spinal_cord]=spinal_cord
         )
-        TS_TASK="total"   # uses the 'total' task which includes HN structures
+        TS_TASK="total"
+        ROI_SUBSET="brainstem parotid_gland_left parotid_gland_right mandible spinal_cord"
         ;;
     thorax)
         LABEL_MAP=(
@@ -107,6 +108,7 @@ case "${ANATOMY}" in
             [esophagus]=esophagus
         )
         TS_TASK="total"
+        ROI_SUBSET="lung_left lung_right heart spinal_cord esophagus"
         ;;
     abdomen)
         LABEL_MAP=(
@@ -117,6 +119,7 @@ case "${ANATOMY}" in
             [pancreas]=pancreas
         )
         TS_TASK="total"
+        ROI_SUBSET="liver kidney_left kidney_right spleen pancreas"
         ;;
 esac
 
@@ -199,6 +202,7 @@ PYEOF
             -o  "${SEG_OUT_DIR}" \
             --fast \
             --task "${TS_TASK}" \
+            --roi_subset ${ROI_SUBSET} \
             2>> "${LOG_FILE}"; then
 
         log "[OK] TotalSegmentator completed for ${PATIENT_ID}"
