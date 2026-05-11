@@ -75,7 +75,7 @@ spec:
         # Number of training epochs per ablation configuration.
         # Match this to the epoch count used for your full model run.
         - name: EPOCHS
-          value: "100"
+          value: "50"
 
         # DataLoader workers per subprocess
         - name: NUM_WORKERS
@@ -154,7 +154,7 @@ spec:
           fi
 
           # ── Run ablation study ─────────────────────────────────────────────
-          log "Starting ablation runner (6 configs × ${EPOCHS} epochs)..."
+          log "Starting ablation runner (17 configs × ${EPOCHS} epochs)..."
           mkdir -p "${OUTPUT_DIR}"
 
           python3 evaluate/ablation_runner.py \
