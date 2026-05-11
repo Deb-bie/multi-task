@@ -1,30 +1,50 @@
 """
-Ablation study runner for the multi-task CycleGAN.
+Ablation study runner for the multi-task CycleGAN (HN-focused).
 
-Runs all 6 ablation configurations sequentially on a single anatomical
-region by launching ``train/train_multitask.py`` as a subprocess for each
-configuration.  Each ablation receives:
+Runs 18 ablation configurations sequentially on a single anatomical region
+by launching ``train/train_multitask.py`` as a subprocess for each one.
+Each ablation receives:
 
 * Its own checkpoint directory: ``checkpoints/{ablation_name}/{anatomy}/``
 * Its own CSV log: ``logs/{ablation_name}_{anatomy}.csv``
 * A temporary config JSON that merges base_config + anatomy overrides +
   ablation-specific overrides.
 
-After all runs finish (or are found to have existing checkpoints),
-a summary table of best validation metrics is printed to stdout.
+After all runs finish (or are found to have existing checkpoints), a summary
+table of best validation metrics is printed to stdout and saved as a CSV and
+Markdown table.
 
-Ablation configurations
------------------------
-+---------------------------+-------------------------------------------+
-| Name                      | Overrides from base config                |
-+===========================+===========================================+
-| baseline_cyclegan         | Removes seg, anatomy, paired, perc, idt  |
-| paired_cyclegan           | Removes seg, anatomy (keeps paired+perc)  |
-| plus_seg_loss             | Removes anatomy only                      |
-| plus_anatomy_consistency  | Full model (no overrides)                 |
-| no_perceptual             | Sets LAMBDA_PERCEPTUAL=0                  |
-| no_warmup                 | Sets SEG_WARMUP_EPOCHS=0                  |
-+---------------------------+-------------------------------------------+
+Ablation groups (18 configurations total)
+-----------------------------------------
+GROUP 0 — Build-up (3 configs)
+  g0_baseline_cyclegan      Pure bidirectional CycleGAN, no seg/anatomy
+  g0_plus_seg               + segmentation decoder, no anatomy consistency
+  g0_full_model             Full model — reference (no overrides)
+
+GROUP 1 — Architecture (1 config)
+  g1_separate_encoders      Domain-specific encoders E_MR + E_CT
+
+GROUP 2 — Anatomy consistency design (5 configs)
+  g2_anatomy_mr2ct_only     MR→CT consistency only (CT→MR disabled)
+  g2_anatomy_soft_targets   Soft KD targets (T=2) vs hard argmax
+  g2_lambda_anat_0p5        λ_anat = 0.5
+  g2_lambda_anat_1          λ_anat = 1.0
+  g2_lambda_anat_5          λ_anat = 5.0
+
+GROUP 3 — Deep supervision (2 configs)
+  g3_no_deep_sup            No auxiliary heads
+  g3_deep_sup_coarse_only   Coarsest scale (1/4 res) only
+
+GROUP 4 — Per-structure HN (4 configs)
+  g4_no_brainstem           Class weight → 0 for brainstem
+  g4_no_parotids            Class weight → 0 for parotid L+R
+  g4_no_mandible            Class weight → 0 for mandible
+  g4_cord_bg_only           Supervise only background + spinal cord
+
+GROUP 5 — Warmup sensitivity (3 configs)
+  g5_warmup_0               No warmup (seg active from epoch 1)
+  g5_warmup_10              10-epoch warmup
+  g5_warmup_20              20-epoch warmup
 
 Usage::
 
@@ -34,7 +54,9 @@ Usage::
         --split_dir splits/ \\
         --base_config configs/base_config.json \\
         --output_dir . \\
-        [--dry_run]          # print commands without executing
+        --epochs 100 \\
+        [--dry_run]      # print commands without executing
+        [--device 1]     # pin to GPU 1 (default: inherit CUDA_VISIBLE_DEVICES)
 """
 
 from __future__ import annotations
@@ -55,40 +77,140 @@ from typing import Any, Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 #: Each entry is a dict of config overrides applied ON TOP of
-#: (base_config + anatomy_config).  Empty dict = full model.
+#: (base_config + anatomy_config).  Empty dict = full model (reference).
+#:
+#: Organised into five groups for the HN-focused ablation study:
+#:
+#: GROUP 0 — Build-up (incremental component contribution table)
+#: GROUP 1 — Architecture design (shared vs separate encoder)
+#: GROUP 2 — Anatomy consistency design (target mode, direction, λ sensitivity)
+#: GROUP 3 — Deep supervision (scale selection)
+#: GROUP 4 — Per-structure HN (which organs drive the benefit)
+#: GROUP 5 — Warmup sensitivity (seg loss schedule)
+#:
+#: HN class index mapping (6 classes including background):
+#:   0 = background  1 = brainstem  2 = parotid_L  3 = parotid_R
+#:   4 = mandible    5 = spinal_cord
+
 ABLATION_CONFIGS: Dict[str, Dict[str, Any]] = {
-    "baseline_cyclegan": {
-        # Pure unpaired CycleGAN: remove all paired/seg/perc supervision
+
+    # ── GROUP 0: Build-up ───────────────────────────────────────────────────
+    # Answers: which components are necessary?
+
+    "g0_baseline_cyclegan": {
+        # Pure bidirectional CycleGAN — no seg, no anatomy, no paired, no perc
         "LAMBDA_SEG":          0,
         "LAMBDA_ANATOMY":      0,
+        "LAMBDA_ANATOMY_CT2MR": 0,
         "LAMBDA_PAIRED_MR2CT": 0,
         "LAMBDA_PAIRED_CT2MR": 0,
         "LAMBDA_PERCEPTUAL":   0,
         "LAMBDA_IDENTITY":     0,
     },
-    "paired_cyclegan": {
-        # Paired CycleGAN without segmentation tasks
-        "LAMBDA_SEG":     0,
-        "LAMBDA_ANATOMY": 0,
+    "g0_plus_seg": {
+        # Add segmentation decoder — no anatomy consistency yet
+        "LAMBDA_ANATOMY":      0,
+        "LAMBDA_ANATOMY_CT2MR": 0,
     },
-    "plus_seg_loss": {
-        # Paired CycleGAN + seg supervision, no anatomy consistency
-        "LAMBDA_ANATOMY": 0,
+    "g0_full_model": {
+        # Reference model — no overrides (all components active)
     },
-    "plus_anatomy_consistency": {
-        # Full model — no overrides
+
+    # ── GROUP 1: Architecture ───────────────────────────────────────────────
+    # Answers: does a shared encoder actually help over domain-specific encoders?
+
+    "g1_separate_encoders": {
+        # Two independent encoders E_MR and E_CT instead of one shared E.
+        # All cross-modal alignment must emerge from the cycle loss alone.
+        "SHARED_ENCODER": False,
     },
-    "no_perceptual": {
-        # Ablate the perceptual loss only
-        "LAMBDA_PERCEPTUAL": 0,
+
+    # ── GROUP 2: Anatomy consistency design ────────────────────────────────
+    # Answers: how should the anatomy consistency loss be configured?
+
+    "g2_anatomy_mr2ct_only": {
+        # Disable CT→MRI anatomy consistency; keep MR→CT direction only.
+        # Tests whether bidirectional consistency is necessary or if one
+        # direction carries most of the benefit.
+        "LAMBDA_ANATOMY_CT2MR": 0,
     },
-    "no_warmup": {
-        # Train segmentation at full weight from epoch 1
+    "g2_anatomy_soft_targets": {
+        # Replace hard argmax pseudo-labels with temperature-scaled softmax
+        # distributions, preserving the teacher's uncertainty signal.
+        "ANATOMY_SOFT_TARGETS": True,
+        "ANATOMY_TEMPERATURE":  2.0,
+    },
+    "g2_lambda_anat_0p5": {
+        # λ_anat = 0.5 (weak anatomy signal)
+        "LAMBDA_ANATOMY":      0.5,
+        "LAMBDA_ANATOMY_CT2MR": 0.5,
+    },
+    "g2_lambda_anat_1": {
+        # λ_anat = 1.0
+        "LAMBDA_ANATOMY":      1.0,
+        "LAMBDA_ANATOMY_CT2MR": 1.0,
+    },
+    "g2_lambda_anat_5": {
+        # λ_anat = 5.0 (strong anatomy signal — may dominate synthesis)
+        "LAMBDA_ANATOMY":      5.0,
+        "LAMBDA_ANATOMY_CT2MR": 5.0,
+    },
+
+    # ── GROUP 3: Deep supervision ───────────────────────────────────────────
+    # Answers: how many auxiliary scales are needed?
+
+    "g3_no_deep_sup": {
+        # No auxiliary heads — only the main segmentation head is supervised.
+        "DEEP_SUPERVISION_WEIGHTS": [],
+    },
+    "g3_deep_sup_coarse_only": {
+        # Only the 1/4-resolution (coarsest) auxiliary head.
+        # Tests whether fine-scale auxiliary supervision is necessary.
+        "DEEP_SUPERVISION_WEIGHTS": [0.4],
+    },
+
+    # ── GROUP 4: Per-structure (HN-specific) ───────────────────────────────
+    # Answers: which structures drive the synthesis improvement?
+    # Zero-weight classes are excluded from CE and Dice loss computation
+    # but the decoder still predicts them (they become unsupervised).
+    # Class index: 0=bg 1=brainstem 2=parotid_L 3=parotid_R 4=mandible 5=cord
+
+    "g4_no_brainstem": {
+        # Remove brainstem (hardest structure, small volume, poor CT contrast).
+        "CLASS_WEIGHTS": [1.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+    },
+    "g4_no_parotids": {
+        # Remove both parotid glands (most clinically relevant for HN RT).
+        "CLASS_WEIGHTS": [1.0, 1.0, 0.0, 0.0, 1.0, 1.0],
+    },
+    "g4_no_mandible": {
+        # Remove mandible (large bony structure, most CT-distinct).
+        "CLASS_WEIGHTS": [1.0, 1.0, 1.0, 1.0, 0.0, 1.0],
+    },
+    "g4_cord_bg_only": {
+        # Supervise only background + spinal cord (easiest classes).
+        # Shows lower bound of segmentation complexity for synthesis benefit.
+        "CLASS_WEIGHTS": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    },
+
+    # ── GROUP 5: Warmup sensitivity ─────────────────────────────────────────
+    # Answers: how sensitive is training to the seg loss warmup schedule?
+
+    "g5_warmup_0": {
+        # Segmentation loss active from epoch 1 — no warmup.
         "SEG_WARMUP_EPOCHS": 0,
+    },
+    "g5_warmup_10": {
+        # 10-epoch warmup (2× the default of 5).
+        "SEG_WARMUP_EPOCHS": 10,
+    },
+    "g5_warmup_20": {
+        # 20-epoch warmup — GAN/cycle losses well-established before seg engages.
+        "SEG_WARMUP_EPOCHS": 20,
     },
 }
 
-# Canonical display order for the summary table
+# Canonical display order — groups are printed together in the summary table
 _ABLATION_ORDER: List[str] = list(ABLATION_CONFIGS.keys())
 
 
@@ -192,6 +314,8 @@ def run_ablations(
     output_dir:  str,
     dry_run:     bool = False,
     train_script: Optional[str] = None,
+    epochs:      Optional[int] = None,
+    device:      Optional[str] = None,
 ) -> None:
     """Run all 6 ablation configurations sequentially.
 
@@ -213,6 +337,12 @@ def run_ablations(
         output_dir:  Root output directory.
         dry_run:     If ``True``, print commands and exit without running.
         train_script: Optional path override to ``train_multitask.py``.
+        epochs:      Override ``EPOCHS`` in the merged config.  If ``None``,
+                     the value from base_config / anatomy config is used.
+                     Pass ``100`` to match a full-model run of 100 epochs.
+        device:      CUDA device string passed to each subprocess via the
+                     ``CUDA_VISIBLE_DEVICES`` environment variable
+                     (e.g. ``"0"``, ``"1"``).  ``None`` = inherit from caller.
     """
     root         = Path(__file__).resolve().parents[1]
     output_dir_p = Path(output_dir)
@@ -251,6 +381,14 @@ def run_ablations(
         # Remove comment/metadata keys that JSON5 would allow but stdlib won't
         merged = {k: v for k, v in merged.items() if not k.startswith("_")}
 
+        # Apply CLI epoch override LAST so it always wins
+        if epochs is not None:
+            merged["EPOCHS"] = epochs
+            # Also fix DECAY_EPOCH so LR decay starts at the right point
+            # (default: decay from 50% of EPOCHS onwards)
+            if "DECAY_EPOCH" not in overrides:
+                merged["DECAY_EPOCH"] = epochs // 2
+
         # Write to temp file
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -285,13 +423,19 @@ def run_ablations(
         print(f"Command  : {' '.join(cmd)}")
 
         if dry_run:
+            if device is not None:
+                print(f"Env      : CUDA_VISIBLE_DEVICES={device}")
             print("[dry-run] Skipping execution.")
             summary_rows.append((ablation_name, _best_row_from_csv(csv_path)))
             continue
 
         # ── Execute ──────────────────────────────────────────────────────
+        env = os.environ.copy()
+        if device is not None:
+            env["CUDA_VISIBLE_DEVICES"] = device
+
         t0 = time.monotonic()
-        result = subprocess.run(cmd, check=False)
+        result = subprocess.run(cmd, check=False, env=env)
         elapsed = time.monotonic() - t0
 
         if result.returncode != 0:
@@ -472,6 +616,27 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override path to train_multitask.py (default: auto-detected).",
     )
+    p.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help=(
+            "Override EPOCHS for all ablation runs.  "
+            "If omitted, the value in base_config.json is used.  "
+            "Example: --epochs 100 to match a 100-epoch full-model run.  "
+            "DECAY_EPOCH is automatically set to epochs // 2 unless already "
+            "present in the ablation override."
+        ),
+    )
+    p.add_argument(
+        "--device",
+        default=None,
+        help=(
+            "CUDA device index passed as CUDA_VISIBLE_DEVICES to every "
+            "training subprocess (e.g. --device 1 to use GPU 1).  "
+            "Omit to inherit the caller's CUDA_VISIBLE_DEVICES."
+        ),
+    )
     return p.parse_args()
 
 
@@ -486,6 +651,8 @@ def main() -> None:
         output_dir=args.output_dir,
         dry_run=args.dry_run,
         train_script=args.train_script,
+        epochs=args.epochs,
+        device=args.device,
     )
 
 

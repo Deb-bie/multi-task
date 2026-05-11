@@ -116,18 +116,40 @@ class MultitaskCycleGAN(nn.Module):
         n_res_blocks_enc: int = 6,
         num_seg_classes: int = 6,
         disc_features: int = 64,
+        shared_encoder: bool = True,
     ) -> None:
         super().__init__()
 
-        # ── Shared encoder ───────────────────────────────────────────────
-        self.E = SharedEncoder(
-            in_channels=in_channels,
-            base_filters=base_filters,
-            n_res_blocks=n_res_blocks_enc,
-        )
-        enc_ch    = self.E.out_channels    # 256
-        skip1_ch  = self.E.skip1_channels  # 128
-        skip2_ch  = self.E.skip2_channels  # 256
+        self._shared_encoder = shared_encoder
+
+        if shared_encoder:
+            # ── Shared encoder (default) ─────────────────────────────────
+            self.E = SharedEncoder(
+                in_channels=in_channels,
+                base_filters=base_filters,
+                n_res_blocks=n_res_blocks_enc,
+            )
+            enc_ch   = self.E.out_channels
+            skip1_ch = self.E.skip1_channels
+            skip2_ch = self.E.skip2_channels
+        else:
+            # ── Separate per-domain encoders (architecture ablation) ──────
+            # E_MR processes MRI inputs; E_CT processes CT inputs.
+            # Neither encoder sees the other domain during the forward pass,
+            # so all cross-modal alignment must emerge from the cycle loss alone.
+            self.E_MR = SharedEncoder(
+                in_channels=in_channels,
+                base_filters=base_filters,
+                n_res_blocks=n_res_blocks_enc,
+            )
+            self.E_CT = SharedEncoder(
+                in_channels=in_channels,
+                base_filters=base_filters,
+                n_res_blocks=n_res_blocks_enc,
+            )
+            enc_ch   = self.E_MR.out_channels
+            skip1_ch = self.E_MR.skip1_channels
+            skip2_ch = self.E_MR.skip2_channels
 
         # ── Synthesis decoder G: MRI → CT ────────────────────────────────
         self.G = SynthesisDecoder(
@@ -166,25 +188,38 @@ class MultitaskCycleGAN(nn.Module):
 
     def _encode_and_segment(
         self,
-        img: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Encode *img*, capture skips, and return bottleneck + skip tensors.
+        img:    torch.Tensor,
+        domain: str = "shared",
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Encode *img* with the appropriate encoder and capture skip tensors.
 
-        This helper keeps the forward method readable by encapsulating the
-        three-step pattern: encode → capture skip references → (optionally
-        segment).
+        When ``shared_encoder=True`` (default), ``self.E`` is used for all
+        inputs regardless of *domain*.  When ``shared_encoder=False``
+        (separate-encoder ablation), *domain* selects ``self.E_MR`` for
+        ``"mr"`` inputs and ``self.E_CT`` for ``"ct"`` inputs.  Synthesised
+        images always use the target domain's encoder so that the cycle path
+        is self-consistent.
 
         Args:
-            img: Image tensor ``(B, 3, 256, 256)``.
+            img:    Image tensor ``(B, 3, 256, 256)``.
+            domain: ``"mr"`` | ``"ct"`` | ``"shared"`` (ignored when
+                    ``shared_encoder=True``).
 
         Returns:
             Tuple ``(feat, skip1, skip2)`` where *feat* is the bottleneck
-            ``(B, 256, 64, 64)`` and *skip1*, *skip2* are the encoder's
-            intermediate activations.
+            ``(B, enc_ch, H/4, W/4)`` and *skip1*, *skip2* are intermediate
+            activations used by the segmentation decoder's skip connections.
         """
-        feat  = self.E(img)
-        skip1 = self.E.skip1   # (B, 128, 128, 128) — reference valid until next E call
-        skip2 = self.E.skip2   # (B, 256,  64,  64)
+        if self._shared_encoder:
+            enc = self.E
+        elif domain == "mr":
+            enc = self.E_MR
+        else:                  # "ct" or "shared" fall back to E_CT
+            enc = self.E_CT
+
+        feat  = enc(img)
+        skip1 = enc.skip1
+        skip2 = enc.skip2
         return feat, skip1, skip2
 
     # ------------------------------------------------------------------
@@ -216,21 +251,17 @@ class MultitaskCycleGAN(nn.Module):
             separately inside the training loop.
         """
         # ── (1) Encode real MRI ──────────────────────────────────────────
-        feat_real_MR, skip1_real_MR, skip2_real_MR = self._encode_and_segment(real_MR)
+        feat_real_MR, skip1_real_MR, skip2_real_MR = self._encode_and_segment(real_MR, "mr")
 
         # ── (2) Synthesise fake CT and identity MRI ──────────────────────
-        # G(E(MR))          → fake CT
-        # F(E(MR))          → identity MRI  (F should map MR→MR via CT-decoder path)
         fake_CT = self.G(feat_real_MR)
-        idt_MR  = self.F(feat_real_MR)   # identity: F applied to MRI features
+        idt_MR  = self.F(feat_real_MR)
 
         # ── (3) Segment real MRI ─────────────────────────────────────────
-        # S returns (main_logits, aux_list); aux_list is non-empty only in
-        # training mode when use_deep_supervision=True.
         seg_real_MR, seg_aux_real_MR = self.S(feat_real_MR, skip1_real_MR, skip2_real_MR)
 
         # ── (4) Encode real CT ───────────────────────────────────────────
-        feat_real_CT, skip1_real_CT, skip2_real_CT = self._encode_and_segment(real_CT)
+        feat_real_CT, skip1_real_CT, skip2_real_CT = self._encode_and_segment(real_CT, "ct")
 
         # ── (5) Synthesise fake MRI and identity CT ──────────────────────
         fake_MR = self.F(feat_real_CT)
@@ -240,12 +271,14 @@ class MultitaskCycleGAN(nn.Module):
         seg_real_CT, _aux_real_CT = self.S(feat_real_CT, skip1_real_CT, skip2_real_CT)
 
         # ── (7) Encode fake CT → cycle MRI ──────────────────────────────
-        feat_fake_CT, skip1_fake_CT, skip2_fake_CT = self._encode_and_segment(fake_CT)
+        # fake_CT is a CT-domain image → use the CT encoder
+        feat_fake_CT, skip1_fake_CT, skip2_fake_CT = self._encode_and_segment(fake_CT, "ct")
         cycle_MR    = self.F(feat_fake_CT)
         seg_fake_CT, _aux_fake_CT = self.S(feat_fake_CT, skip1_fake_CT, skip2_fake_CT)
 
         # ── (8) Encode fake MRI → cycle CT ──────────────────────────────
-        feat_fake_MR, skip1_fake_MR, skip2_fake_MR = self._encode_and_segment(fake_MR)
+        # fake_MR is an MRI-domain image → use the MR encoder
+        feat_fake_MR, skip1_fake_MR, skip2_fake_MR = self._encode_and_segment(fake_MR, "mr")
         cycle_CT    = self.G(feat_fake_MR)
         seg_fake_MR, _aux_fake_MR = self.S(feat_fake_MR, skip1_fake_MR, skip2_fake_MR)
 
@@ -273,14 +306,22 @@ class MultitaskCycleGAN(nn.Module):
     # ------------------------------------------------------------------
 
     def generator_parameters(self):
-        """Return an iterator over all generator (E, G, F, S) parameters.
+        """Return an iterator over all generator (E / E_MR+E_CT, G, F, S) parameters.
+
+        Handles both the shared-encoder (default) and separate-encoder
+        (``shared_encoder=False``) configurations automatically.
 
         Used to build the generator optimiser::
 
             opt_G = torch.optim.Adam(model.generator_parameters(), lr=2e-4)
         """
+        if self._shared_encoder:
+            enc_params = list(self.E.parameters())
+        else:
+            enc_params = list(self.E_MR.parameters()) + list(self.E_CT.parameters())
+
         return (
-            list(self.E.parameters())
+            enc_params
             + list(self.G.parameters())
             + list(self.F.parameters())
             + list(self.S.parameters())

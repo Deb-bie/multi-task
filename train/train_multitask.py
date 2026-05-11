@@ -166,11 +166,17 @@ def build_losses(
     lambda_perc = config.get("LAMBDA_PERCEPTUAL", 1) if config is not None else 1
     perc_loss = PerceptualLoss().to(device) if lambda_perc > 0 else None
 
+    soft_targets = config.get("ANATOMY_SOFT_TARGETS", False) if config else False
+    anat_temperature = float(config.get("ANATOMY_TEMPERATURE", 2.0)) if config else 2.0
+
     return {
         "gan":        GANLoss().to(device),
         "perceptual": perc_loss,
         "seg":        SegLoss(class_weights=class_weights).to(device),
-        "anatomy":    AnatomyConsistencyLoss().to(device),
+        "anatomy":    AnatomyConsistencyLoss(
+                          soft_targets=soft_targets,
+                          temperature=anat_temperature,
+                      ).to(device),
     }
 
 
@@ -703,21 +709,26 @@ def main() -> None:
     split_data   = load_split(args.split_dir, args.anatomy)
     # Slice indices are cached to /data/splits/index_cache/ so rebuilding on
     # restart is instant instead of reading hundreds of .mha headers again.
-    # index_cache_dir = str(Path(args.split_dir) / "index_cache")
+    index_cache_dir = str(Path(args.split_dir) / "index_cache")
 
     train_loader = make_dataloader(
         split_data["train"], args.anatomy, args.data_root, "train",
         config["BATCH_SIZE"], config["NUM_WORKERS"], config["IMAGE_SIZE"],
-        # index_cache_dir=index_cache_dir,
+        index_cache_dir=index_cache_dir,
     )
     val_loader = make_dataloader(
         split_data["val"], args.anatomy, args.data_root, "val",
         config["BATCH_SIZE"], config["NUM_WORKERS"], config["IMAGE_SIZE"],
-        # index_cache_dir=index_cache_dir,
+        index_cache_dir=index_cache_dir,
     )
 
     # ── Model ──────────────────────────────────────────────────────────────
-    model = MultitaskCycleGAN(num_seg_classes=num_classes).to(device)
+    shared_encoder = config.get("SHARED_ENCODER", True)
+    print(f"Encoder : {'shared' if shared_encoder else 'separate (E_MR + E_CT)'}")
+    model = MultitaskCycleGAN(
+        num_seg_classes=num_classes,
+        shared_encoder=shared_encoder,
+    ).to(device)
 
     # ── Optimisers ─────────────────────────────────────────────────────────
     opt_G = optim.Adam(
