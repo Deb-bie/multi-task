@@ -706,20 +706,15 @@ def main() -> None:
     csv_path = logs_dir / csv_name
 
     # ── Data ──────────────────────────────────────────────────────────────
-    split_data   = load_split(args.split_dir, args.anatomy)
-    # Slice indices are cached to /data/splits/index_cache/ so rebuilding on
-    # restart is instant instead of reading hundreds of .mha headers again.
-    index_cache_dir = str(Path(args.split_dir) / "index_cache")
+    split_data = load_split(args.split_dir, args.anatomy)
 
     train_loader = make_dataloader(
         split_data["train"], args.anatomy, args.data_root, "train",
         config["BATCH_SIZE"], config["NUM_WORKERS"], config["IMAGE_SIZE"],
-        index_cache_dir=index_cache_dir,
     )
     val_loader = make_dataloader(
         split_data["val"], args.anatomy, args.data_root, "val",
         config["BATCH_SIZE"], config["NUM_WORKERS"], config["IMAGE_SIZE"],
-        index_cache_dir=index_cache_dir,
     )
 
     # ── Model ──────────────────────────────────────────────────────────────
