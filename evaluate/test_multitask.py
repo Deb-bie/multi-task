@@ -162,14 +162,20 @@ def _slices_to_3ch_tensor(volume_zyx: np.ndarray) -> torch.Tensor:
 
 @torch.no_grad()
 def _run_patient_inference(
-    model:   MultitaskCycleGAN,
-    mr_arr:  np.ndarray,
-    ct_arr:  np.ndarray,
-    mask_arr: np.ndarray,
-    device:  torch.device,
+    model:      MultitaskCycleGAN,
+    mr_arr:     np.ndarray,
+    ct_arr:     np.ndarray,
+    mask_arr:   np.ndarray,
+    device:     torch.device,
     batch_size: int = 8,
+    image_size: int = 256,
 ) -> Dict[str, np.ndarray]:
     """Run slice-by-slice inference for a single patient.
+
+    Slices are resized to ``image_size`` × ``image_size`` before the forward
+    pass (matching the training resolution) and resized back to the native
+    patient resolution before returning, so NIfTI outputs preserve the
+    original voxel grid.
 
     Args:
         model:      Loaded MultitaskCycleGAN in eval mode.
@@ -178,15 +184,20 @@ def _run_patient_inference(
         mask_arr:   Binary foreground mask ``(Z, H, W)``.
         device:     Compute device.
         batch_size: Number of slices per forward pass.
+        image_size: Spatial resolution the model was trained at (default 256).
 
     Returns:
         Dict with keys ``fake_CT``, ``fake_MR``, ``seg_pred`` — each a
-        float32 NumPy array with axes (Z, H, W).  ``seg_pred`` contains
-        integer argmax class indices.
+        float32 NumPy array with axes (Z, H, W) at the *native* resolution.
+        ``seg_pred`` contains integer argmax class indices.
     """
-    model.eval()
-    Z = mr_arr.shape[0]
+    import torch.nn.functional as F
 
+    model.eval()
+    Z, H_nat, W_nat = mr_arr.shape
+    need_resize = (H_nat != image_size or W_nat != image_size)
+
+    # Outputs are accumulated at native resolution
     fake_ct_slices  = np.zeros_like(mr_arr)
     fake_mr_slices  = np.zeros_like(ct_arr)
     seg_pred_slices = np.zeros(mr_arr.shape, dtype=np.int16)
@@ -195,16 +206,34 @@ def _run_patient_inference(
     ct_tensor = _slices_to_3ch_tensor(ct_arr)
 
     for start in range(0, Z, batch_size):
-        end   = min(start + batch_size, Z)
-        mr_b  = mr_tensor[start:end].to(device)   # (B, 3, H, W)
-        ct_b  = ct_tensor[start:end].to(device)
+        end  = min(start + batch_size, Z)
+        mr_b = mr_tensor[start:end].to(device)   # (B, 3, H, W)
+        ct_b = ct_tensor[start:end].to(device)
+
+        # Resize to training resolution if native size differs
+        if need_resize:
+            mr_b = F.interpolate(mr_b, size=(image_size, image_size),
+                                 mode="bilinear", align_corners=False)
+            ct_b = F.interpolate(ct_b, size=(image_size, image_size),
+                                 mode="bilinear", align_corners=False)
 
         out = model(mr_b, ct_b)
 
-        fake_ct_slices[start:end]  = out["fake_CT"].mean(dim=1).cpu().numpy()
-        fake_mr_slices[start:end]  = out["fake_MR"].mean(dim=1).cpu().numpy()
-        # Use MR segmentation (seg_real_MR) as primary seg prediction
-        seg_logits = out["seg_real_MR"]            # (B, C, H, W)
+        fake_ct = out["fake_CT"]   # (B, 3, image_size, image_size)
+        fake_mr = out["fake_MR"]
+        seg_logits = out["seg_real_MR"]   # (B, C, image_size, image_size)
+
+        # Resize outputs back to native resolution
+        if need_resize:
+            fake_ct    = F.interpolate(fake_ct,    size=(H_nat, W_nat),
+                                       mode="bilinear", align_corners=False)
+            fake_mr    = F.interpolate(fake_mr,    size=(H_nat, W_nat),
+                                       mode="bilinear", align_corners=False)
+            seg_logits = F.interpolate(seg_logits, size=(H_nat, W_nat),
+                                       mode="bilinear", align_corners=False)
+
+        fake_ct_slices[start:end]  = fake_ct.mean(dim=1).cpu().numpy()
+        fake_mr_slices[start:end]  = fake_mr.mean(dim=1).cpu().numpy()
         seg_pred_slices[start:end] = (
             seg_logits.argmax(dim=1).cpu().numpy().astype(np.int16)
         )
@@ -477,7 +506,8 @@ def evaluate(
 
         # Inference
         preds = _run_patient_inference(
-            model, mr_arr, ct_arr, mask_arr, device, batch_size
+            model, mr_arr, ct_arr, mask_arr, device, batch_size,
+            image_size=cfg.get("IMAGE_SIZE", 256),
         )
 
         # Save NIfTI outputs
