@@ -422,14 +422,18 @@ def evaluate(
         cfg: Dict[str, Any] = json.load(fh)
 
     # Normalise anatomy-config keys (accept both cases)
-    num_classes  = cfg.get("num_classes",  cfg.get("NUM_CLASSES",  6))
-    organ_names  = cfg.get("organ_names",  cfg.get("ORGAN_NAMES",
-                   ["background"] + [f"class_{i}" for i in range(1, num_classes)]))
+    num_classes     = cfg.get("num_classes",    cfg.get("NUM_CLASSES",    6))
+    shared_encoder  = cfg.get("shared_encoder", cfg.get("SHARED_ENCODER", True))
+    organ_names     = cfg.get("organ_names",    cfg.get("ORGAN_NAMES",
+                      ["background"] + [f"class_{i}" for i in range(1, num_classes)]))
 
     # ── Build model ───────────────────────────────────────────────────────────
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
 
-    model = MultitaskCycleGAN(num_classes=num_classes).to(device)
+    model = MultitaskCycleGAN(
+        num_seg_classes=num_classes,
+        shared_encoder=shared_encoder,
+    ).to(device)
 
     ckpt = torch.load(checkpoint, map_location=device)
     model.load_state_dict(ckpt["model_state"])
