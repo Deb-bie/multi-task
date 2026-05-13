@@ -1,0 +1,60 @@
+{
+  "_comment": "Base hyperparameter config for synthrad2025-multitask. Anatomy-specific files in configs/anatomy/ override keys as needed.",
+
+  "SEED": 42,
+
+  "IMAGE_SIZE": 256,
+
+  "BATCH_SIZE": 1,
+
+  "EPOCHS": 100,
+
+  "LR":   2e-4,
+  "LR_D": 1e-4,
+  "BETA1": 0.5,
+  "BETA2": 0.999,
+
+  "LAMBDA_CYCLE":         10,
+  "LAMBDA_IDENTITY":       5,
+
+  "LAMBDA_PAIRED_MR2CT":  10,
+  "LAMBDA_PAIRED_CT2MR":  10,
+
+  "LAMBDA_PERCEPTUAL":     1,
+
+  "LAMBDA_SEG":            5,
+
+  "LAMBDA_ANATOMY":        3,
+  "LAMBDA_ANATOMY_CT2MR":  3,
+
+  "SEG_WARMUP_EPOCHS":     5,
+
+  "NUM_WORKERS": 4,
+
+  "CHECKPOINT_FREQ": 10,
+
+  "DECAY_EPOCH": 50,
+
+  "MR2CT_SSIM_FLOOR": 0.82,
+  "CT2MR_SSIM_FLOOR": 0.75,
+  "MEAN_DICE_FLOOR":  0.0,
+
+  "CLASS_WEIGHTS": null,
+
+  "DEEP_SUPERVISION_WEIGHTS": [0.2, 0.4],
+
+  "_notes": {
+    "LAMBDA_PERCEPTUAL":    "Must remain 1. Previous value of 5 caused MRI→CT SSIM to drop from 0.85 → 0.70. Applied to BOTH synthesis directions.",
+    "LAMBDA_PAIRED_MR2CT":  "Must equal LAMBDA_PAIRED_CT2MR. Asymmetry caused training instability in prior runs.",
+    "LAMBDA_PAIRED_CT2MR":  "Must equal LAMBDA_PAIRED_MR2CT.",
+    "LAMBDA_ANATOMY":       "Anatomy consistency weight for MRI→CT direction (seg_fake_CT vs seg_real_MR).",
+    "LAMBDA_ANATOMY_CT2MR": "Anatomy consistency weight for CT→MRI direction (seg_fake_MR vs seg_real_CT). Set to 0 to ablate.",
+    "SEG_WARMUP_EPOCHS":    "During warmup (epoch < SEG_WARMUP_EPOCHS) only seg and paired losses are active; GAN / cycle losses start at epoch >= SEG_WARMUP_EPOCHS.",
+    "MR2CT_SSIM_FLOOR":          "Best-model guard: model is saved only when mr2ct_ssim >= this floor.",
+    "CT2MR_SSIM_FLOOR":          "Symmetric guard: model is saved only when ct2mr_ssim >= this floor. Lower than MR2CT (CT→MRI is harder).",
+    "MEAN_DICE_FLOOR":           "Segmentation guard on best_model.pth: 0.0 = disabled. E.g. set 0.4 to prevent saving models with collapsed segmentation.",
+    "CLASS_WEIGHTS":             "Per-class CE weights for SegLoss, length=num_classes. null = uniform. Use inverse-freq weighting for small organs (e.g. pancreas).",
+    "DEEP_SUPERVISION_WEIGHTS":  "Loss weights for auxiliary heads [aux_128x128, aux_256x256_pre_refine]. Scaled relative to main loss (e.g. [0.2, 0.4]).",
+    "DECAY_EPOCH":               "LR linear decay starts at this epoch and reaches 0 by epoch EPOCHS."
+  }
+}

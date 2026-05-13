@@ -1,0 +1,211 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Kubernetes Job — MT-CycleGAN Ablation Study
+# Runs all 6 ablation configurations sequentially for one anatomical region.
+#
+# Usage (one anatomy at a time):
+#   kubectl apply -f scripts/ablation_job.yaml
+#
+# To run all three anatomies in parallel on separate nodes, create three
+# copies of this file (or use kubectl with --dry-run=client + sed):
+#   for ANAT in hn th ab; do
+#     sed -e "s/ablation-hn/ablation-${ANAT}/g" \
+#         -e "s/head_neck/$(map $ANAT)/g" \
+#         -e "s|/Task1/HN|/Task1/$(upper $ANAT)|g" \
+#         scripts/ablation_job.yaml | kubectl apply -f -
+#   done
+#
+# Monitor:
+#   kubectl logs -f job/ablation-hn
+#   kubectl get job ablation-hn
+#
+# Clean up after completion:
+#   kubectl delete job ablation-hn
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ablation-hn                  # Change to ablation-th or ablation-ab
+  labels:
+    app: mt-cyclegan-ablation
+    anatomy: head-neck               # head-neck | thorax | abdomen
+spec:
+  # No automatic retries — ablation checkpoints are saved to PVC so a
+  # manual re-apply will resume from the last completed configuration.
+  backoffLimit: 0
+  completions: 1
+  parallelism: 1
+
+  # Keep pod logs available for 48 h after the job finishes
+  ttlSecondsAfterFinished: 172800
+
+  template:
+    metadata:
+      labels:
+        app: mt-cyclegan-ablation
+        anatomy: head-neck
+    spec:
+      restartPolicy: Never
+
+      containers:
+      - name: ablation
+        image: nvcr.io/nvidia/pytorch:23.10-py3
+        imagePullPolicy: IfNotPresent
+
+        # ── Environment ──────────────────────────────────────────────────────
+        env:
+        - name: ANATOMY
+          value: head_neck               # head_neck | thorax | abdomen
+
+        # Direct path to the anatomy subfolder inside the data PVC
+        - name: DATA_DIR
+          value: /data/Task1/Task1/HN    # HN | TH | AB
+
+        # Root of the full dataset (used by prepare_splits.py)
+        - name: DATA_ROOT
+          value: /data/Task1/Task1
+
+        # Where split JSONs live (written to PVC so they survive pod restarts)
+        - name: SPLIT_DIR
+          value: /data/splits
+
+        # Where checkpoints and logs are written (on PVC — persistent)
+        - name: OUTPUT_DIR
+          value: /data/ablation_outputs
+
+        # Number of training epochs per ablation configuration.
+        # Match this to the epoch count used for your full model run.
+        - name: EPOCHS
+          value: "50"
+
+        # DataLoader workers per subprocess
+        - name: NUM_WORKERS
+          value: "4"
+
+        - name: PYTHONUNBUFFERED
+          value: "1"
+
+        # ── Command ──────────────────────────────────────────────────────────
+        command:
+        - "bash"
+        - "-c"
+        - |
+          set -euo pipefail
+
+          log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+          log "=== MT-CycleGAN Ablation Job ==="
+          log "Anatomy   : ${ANATOMY}"
+          log "Data dir  : ${DATA_DIR}"
+          log "Split dir : ${SPLIT_DIR}"
+          log "Output dir: ${OUTPUT_DIR}"
+          log "Epochs    : ${EPOCHS}"
+          log "GPU info  :"
+          nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
+
+          # ── Clone / update repo ────────────────────────────────────────────
+          mkdir -p /opt/repo && cd /opt/repo
+          if [ -d "multi-task/.git" ]; then
+            log "Repo exists — pulling latest"
+            cd multi-task && git pull origin main
+          else
+            log "Cloning repo..."
+            git clone --single-branch -b main \
+              https://github.com/Deb-bie/multi-task.git \
+              multi-task
+            cd multi-task
+          fi
+          log "Repo HEAD: $(git rev-parse --short HEAD)"
+
+          # ── Install Python dependencies ────────────────────────────────────
+          log "Installing dependencies..."
+          pip install -q -r requirements.txt
+
+          # ── Verify GPU is visible to PyTorch ──────────────────────────────
+          python3 -c "
+          import torch
+          assert torch.cuda.is_available(), 'No CUDA GPU visible — check node selector / GPU limit'
+          print(f'  GPU: {torch.cuda.get_device_name(0)}  |  VRAM: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB')
+          "
+
+          # ── Ensure split JSON exists for this anatomy ──────────────────────
+          SPLIT_FILE="${SPLIT_DIR}/${ANATOMY}_split.json"
+          if [ ! -f "${SPLIT_FILE}" ]; then
+            log "Split file not found — running prepare_splits.py..."
+            mkdir -p "${SPLIT_DIR}"
+            python3 scripts/prepare_splits.py \
+              --data_dir  "${DATA_DIR}" \
+              --anatomy   "${ANATOMY}" \
+              --split_dir "${SPLIT_DIR}" \
+              --seed      42
+          else
+            log "Split file found: ${SPLIT_FILE}"
+            # Show seg coverage
+            python3 - <<'PYEOF'
+          import json, sys, os
+          anatomy   = os.environ["ANATOMY"]
+          split_dir = os.environ["SPLIT_DIR"]
+          path = f"{split_dir}/{anatomy}_split.json"
+          data = json.load(open(path))
+          for split in ("train", "val", "test"):
+              entries   = data.get(split, [])
+              with_seg  = sum(1 for e in entries if e.get("seg_path"))
+              print(f"  {split:5s}: {len(entries)} patients, {with_seg} with seg_path")
+          PYEOF
+          fi
+
+          # ── Run ablation study ─────────────────────────────────────────────
+          log "Starting ablation runner (17 configs × ${EPOCHS} epochs)..."
+          mkdir -p "${OUTPUT_DIR}"
+
+          python3 evaluate/ablation_runner.py \
+            --anatomy    "${ANATOMY}" \
+            --data_root  "${DATA_ROOT}" \
+            --split_dir  "${SPLIT_DIR}" \
+            --base_config configs/base_config.json \
+            --output_dir "${OUTPUT_DIR}" \
+            --epochs     "${EPOCHS}"
+
+          log "=== Ablation job complete for ${ANATOMY} ==="
+          log "Results written to: ${OUTPUT_DIR}/results/ablation_summary_${ANATOMY}.csv"
+
+        # ── Volume mounts ─────────────────────────────────────────────────────
+        volumeMounts:
+        - name: git-volume
+          mountPath: /opt/repo
+        - name: synthrad-data-volume
+          mountPath: /data
+
+        # ── Resources ─────────────────────────────────────────────────────────
+        # 18 configs × ~9 h each ≈ 162 h sequential on one A100 (~ 7 days).
+        # Memory: 38.6 M param model + batch_size=2 @ 256×256 ≈ 22–28 GB VRAM.
+        # g1_separate_encoders doubles encoder params → peak VRAM ~32 GB.
+        # Request 48 Gi system RAM for DataLoader workers + index cache.
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+            memory: 48Gi
+            cpu: "8"
+          requests:
+            nvidia.com/gpu: "1"
+            memory: 40Gi
+            cpu: "4"
+
+      # ── Node selection ───────────────────────────────────────────────────────
+      # Uncomment and set to target a specific GPU node type:
+      # nodeSelector:
+      #   nvidia.com/gpu.product: A100-SXM4-80GB
+
+      # ── Tolerations ─────────────────────────────────────────────────────────
+      # Uncomment if your GPU nodes have a NoSchedule taint:
+      # tolerations:
+      # - key: "nvidia.com/gpu"
+      #   operator: "Exists"
+      #   effect: "NoSchedule"
+
+      # ── Volumes ─────────────────────────────────────────────────────────────
+      volumes:
+      - name: git-volume
+        emptyDir: {}
+      - name: synthrad-data-volume
+        persistentVolumeClaim:
+          claimName: synthrad-multitask-train-data
