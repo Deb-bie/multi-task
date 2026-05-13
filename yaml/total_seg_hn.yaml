@@ -1,0 +1,146 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: totalseg-hn
+spec:
+  restartPolicy: Never
+  containers:
+  - name: totalseg
+    image: nvcr.io/nvidia/pytorch:23.10-py3
+    imagePullPolicy: IfNotPresent
+    env:
+    - name: ANATOMY
+      value: head_neck
+    - name: DATA_DIR
+      value: /data/Task1/Task1/HN
+    - name: SEG_ROOT
+      value: /data/seg_outputs
+    - name: OMP_NUM_THREADS
+      value: "2"
+    - name: MKL_NUM_THREADS
+      value: "2"
+    - name: PYTORCH_NO_CUDA_MEMORY_CACHING
+      value: "1"
+    - name: PYTHONUNBUFFERED
+      value: "1"
+    command: ["/bin/bash", "-c"]
+    args:
+    - |
+      exec > >(tee -a /tmp/segmentation.log) 2>&1
+      echo "[$(date)] Starting head & neck segmentation (total task, relaxed criteria)"
+
+      mkdir -p /opt/repo && cd /opt/repo
+      git clone --single-branch -b main https://github.com/Deb-bie/multi-task.git multi-task || (cd multi-task && git pull)
+      cd multi-task
+      echo "Repo HEAD: $(git rev-parse --short HEAD)"
+
+      pip install -q SimpleITK==2.3.1 TotalSegmentator
+
+      mapfile -t patients < <(find "${DATA_DIR}" -maxdepth 1 -type d -exec test -f {}/ct.mha \; -print | xargs -n1 basename | sort)
+      total=${#patients[@]}
+      ok=0
+      fail=0
+
+      processed_file="/tmp/processed.txt"
+      touch "$processed_file"
+
+      for pat in "${patients[@]}"; do
+          if grep -qx "$pat" "$processed_file"; then
+              echo "=== Skipping already processed ${pat} ==="
+              ((ok++))
+              continue
+          fi
+
+          echo "=== Processing ${pat} ($((ok+fail+1))/${total}) ==="
+          CT_MHA="${DATA_DIR}/${pat}/ct.mha"
+          TMP_CT="/tmp/${pat}_ct.nii.gz"
+          SEG_RAW="${SEG_ROOT}/${ANATOMY}/${pat}/seg_raw"
+          SEG_OUT="${SEG_ROOT}/${ANATOMY}/${pat}/seg"
+          mkdir -p "${SEG_RAW}" "${SEG_OUT}"
+
+          if ! python3 -c "import SimpleITK as sitk; sitk.WriteImage(sitk.ReadImage('${CT_MHA}'), '${TMP_CT}')" 2>/tmp/convert_err; then
+              echo "  Convert failed"
+              ((fail++))
+              continue
+          fi
+
+          TotalSegmentator -i "${TMP_CT}" -o "${SEG_RAW}" --task total --fast -d cpu --nr_thr_resamp 2 --nr_thr_saving 2
+          ts_exit=$?
+
+          if [ $ts_exit -ne 0 ]; then
+              echo "  TotalSegmentator failed (exit $ts_exit)"
+              ((fail++))
+              rm -f "${TMP_CT}"
+              continue
+          fi
+
+          # Copy organs that exist
+          declare -A MAP=(
+              [brainstem]=brainstem
+              [parotid_gland_left]=parotid_L
+              [parotid_gland_right]=parotid_R
+              [mandible]=mandible
+              [spinal_cord]=spinal_cord
+          )
+          found_count=0
+          for src in "${!MAP[@]}"; do
+              dst="${MAP[$src]}"
+              src_f="${SEG_RAW}/${src}.nii.gz"
+              dst_f="${SEG_OUT}/${dst}.nii.gz"
+              if [ -f "$src_f" ]; then
+                  cp "$src_f" "$dst_f"
+                  echo "  Copied: $src -> $dst"
+                  ((found_count++))
+              else
+                  echo "  Missing: $src"
+              fi
+          done
+
+          if [ $found_count -gt 0 ]; then
+              echo "  ✓ ${pat} succeeded (found ${found_count}/5 organs)"
+              echo "$pat" >> "$processed_file"
+              ((ok++))
+          else
+              echo "  ✗ ${pat} failed (no organs found)"
+              ((fail++))
+          fi
+
+          # Cleanup
+          rm -rf "${SEG_RAW}" || true
+          rm -f "${TMP_CT}" || true
+          rm -rf /root/.totalseg/models || true
+          sync
+      done
+
+      echo "Segmentation summary: OK=${ok}, FAIL=${fail}, TOTAL=${total}"
+
+      if [ $ok -gt 0 ]; then
+          echo "[$(date)] Merging labels..."
+          python scripts/merge_seg_labels.py \
+              --anatomy "${ANATOMY}" \
+              --data_dir "${DATA_DIR}" \
+              --seg_root "${SEG_ROOT}"
+          echo "[$(date)] Merge completed."
+      else
+          echo "[$(date)] No successful segmentations, skipping merge."
+          exit 1
+      fi
+
+      echo "[$(date)] All done."
+
+    volumeMounts:
+    - name: synthrad-data-volume
+      mountPath: /data
+    resources:
+      limits:
+        memory: "32Gi"
+        cpu: "16"
+        ephemeral-storage: "50Gi"
+      requests:
+        memory: "16Gi"
+        cpu: "8"
+        ephemeral-storage: "25Gi"
+  volumes:
+  - name: synthrad-data-volume
+    persistentVolumeClaim:
+      claimName: synthrad-multitask-train-data

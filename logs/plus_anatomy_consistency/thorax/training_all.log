@@ -1,0 +1,99 @@
+[2026-05-04 23:25:10] Cloning repo...
+[2026-05-04 23:25:11] Repo HEAD: 496e2e1
+[2026-05-04 23:25:11] Installing Python dependencies...
+[2026-05-04 23:25:49] Running pre-flight checks...
+[2026-05-04 23:25:50]   Found: /data/Task1/Task1/TH
+[2026-05-04 23:25:52] Split already exists: /data/splits/thorax_split.json
+[2026-05-04 23:25:52] ========================================
+[2026-05-04 23:25:52] Starting training: thorax  ablation=plus_anatomy_consistency
+Mon May  4 23:25:52 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 590.48.01              Driver Version: 590.48.01      CUDA Version: 13.1     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:60:00.0 Off |                  N/A |
+|  0%   35C    P8             12W /  280W |       1MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+[2026-05-08 19:09:09] Cloning repo...
+[2026-05-08 19:09:15] Repo HEAD: a6f7fce
+[2026-05-08 19:09:15] Installing Python dependencies...
+[2026-05-08 19:14:04] Running pre-flight checks...
+[2026-05-08 19:14:05]   Found: /data/Task1/Task1/HN
+[2026-05-08 19:14:09] Generating split for thorax...
+Scanning: /data/Task1/Task1/HN
+
+[WARNING] 1 patient(s) excluded (missing files):
+  overviews: missing ['mr.mha', 'ct.mha', 'mask.mha']
+
+Split sizes for thorax (seed=42):
+  Total valid : 156
+  Train       : 109  (69.9%)
+  Val         : 22  (14.1%)
+  Test        : 25  (16.0%)
+
+Split JSON written to: /data/splits/thorax_split.json
+[2026-05-08 19:14:44] ========================================
+[2026-05-08 19:14:44] Starting training: thorax  ablation=plus_anatomy_consistency
+Fri May  8 19:14:44 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:60:00.0 Off |                  N/A |
+|  0%   43C    P8             20W /  280W |       1MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+[2026-05-09 03:52:54] ERROR: training failed (exit 1)
+[2026-05-09 05:57:23] Cloning repo...
+[2026-05-09 05:57:25] Repo HEAD: a6f7fce
+[2026-05-09 05:57:25] Installing Python dependencies...
+[2026-05-09 05:58:09] Running pre-flight checks...
+[2026-05-09 05:58:09]   Found: /data/Task1/Task1/HN
+[2026-05-09 05:58:11] Split already exists: /data/splits/thorax_split.json
+[2026-05-09 05:58:11] ========================================
+[2026-05-09 05:58:11] Starting training: thorax  ablation=plus_anatomy_consistency
+Sat May  9 05:58:11 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 590.48.01              Driver Version: 590.48.01      CUDA Version: 13.1     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:3E:00.0 Off |                  N/A |
+|  0%   31C    P8             23W /  280W |       1MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+[2026-05-09 17:17:20] ========================================
+[2026-05-09 17:17:20] Done: thorax

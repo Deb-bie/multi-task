@@ -1,0 +1,158 @@
+[2026-05-04 23:25:09] Cloning repo...
+[2026-05-04 23:25:12] Repo HEAD: 496e2e1
+[2026-05-04 23:25:12] Installing Python dependencies...
+[2026-05-04 23:25:57] Running pre-flight checks...
+[2026-05-04 23:25:57]   Found: /data/Task1/Task1/HN
+[2026-05-04 23:25:59] Split already exists: /data/splits/head_neck_split.json
+[2026-05-04 23:25:59] ========================================
+[2026-05-04 23:25:59] Starting training: head_neck  ablation=plus_anatomy_consistency
+Mon May  4 23:25:59 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.58.03              Driver Version: 595.58.03      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:3D:00.0 Off |                  N/A |
+|  0%   34C    P8             13W /  250W |       1MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+[2026-05-08 16:16:11] Cloning repo...
+[2026-05-08 16:16:13] Repo HEAD: a6f7fce
+[2026-05-08 16:16:13] Installing Python dependencies...
+[2026-05-08 16:17:02] Running pre-flight checks...
+[2026-05-08 16:17:03]   Found: /data/Task1/Task1/HN
+[2026-05-08 16:17:06] Generating split for head_neck...
+Scanning: /data/Task1/Task1/HN
+
+[WARNING] 1 patient(s) excluded (missing files):
+  overviews: missing ['mr.mha', 'ct.mha', 'mask.mha']
+
+Split sizes for head_neck (seed=42):
+  Total valid : 156
+  Train       : 109  (69.9%)
+  Val         : 22  (14.1%)
+  Test        : 25  (16.0%)
+
+Split JSON written to: /data/splits/head_neck_split.json
+[2026-05-08 16:17:37] ========================================
+[2026-05-08 16:17:37] Starting training: head_neck  ablation=plus_anatomy_consistency
+Fri May  8 16:17:37 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.159.03             Driver Version: 580.159.03     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce GTX 1080 Ti     On  |   00000000:03:00.0 Off |                  N/A |
+| 28%   25C    P8              8W /  250W |       3MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+[2026-05-08 16:19:52] ========================================
+[2026-05-08 16:19:52] Done: head_neck
+[2026-05-08 16:32:50] Cloning repo...
+[2026-05-08 16:32:52] Repo HEAD: a6f7fce
+[2026-05-08 16:32:52] Installing Python dependencies...
+[2026-05-08 16:33:38] Running pre-flight checks...
+[2026-05-08 16:33:38]   Found: /data/Task1/Task1/HN
+[2026-05-08 16:33:48] Split already exists: /data/splits/head_neck_split.json
+[2026-05-08 16:33:48] ========================================
+[2026-05-08 16:33:48] Starting training: head_neck  ablation=plus_anatomy_consistency
+Fri May  8 16:33:48 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 590.48.01              Driver Version: 590.48.01      CUDA Version: 13.1     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:60:00.0 Off |                  N/A |
+|  0%   30C    P8             11W /  280W |       1MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+[2026-05-09 22:55:38] ========================================
+[2026-05-09 22:55:39] Done: head_neck
+[2026-05-10 01:32:36] Cloning repo...
+[2026-05-10 01:32:38] Repo HEAD: a641bd4
+[2026-05-10 01:32:38] Installing Python dependencies...
+[2026-05-10 01:33:33] Running pre-flight checks...
+[2026-05-10 01:33:34]   Found: /data/Task1/Task1/HN
+[2026-05-10 01:33:37] Split already exists: /data/splits/head_neck_split.json
+[2026-05-10 01:33:37] ========================================
+[2026-05-10 01:33:37] Starting training: head_neck  ablation=plus_anatomy_consistency
+Sun May 10 01:33:38 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.159.03             Driver Version: 580.159.03     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce GTX 1080 Ti     On  |   00000000:27:00.0 Off |                  N/A |
+| 28%   22C    P8              8W /  250W |       3MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+[2026-05-11 20:09:01] Cloning repo...
+[2026-05-11 20:09:02] Repo HEAD: c02697c
+[2026-05-11 20:09:02] Installing Python dependencies...
+[2026-05-11 20:09:40] Running pre-flight checks...
+[2026-05-11 20:09:40]   Found: /data/Task1/Task1/HN
+[2026-05-11 20:09:43] Split already exists: /data/splits/head_neck_split.json
+[2026-05-11 20:09:43] ========================================
+[2026-05-11 20:09:43] Starting training: head_neck  ablation=plus_anatomy_consistency
+Mon May 11 20:09:43 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.58.03              Driver Version: 595.58.03      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A10                     On  |   00000000:81:00.0 Off |                    0 |
+|  0%   37C    P8             46W /  150W |       0MiB /  23028MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+[2026-05-13 00:19:35] ========================================
+[2026-05-13 00:19:36] Done: head_neck

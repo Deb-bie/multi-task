@@ -1,0 +1,13 @@
+Device  : cuda
+Anatomy : abdomen  |  num_classes: 6
+Epochs  : 100  |  DECAY_EPOCH: 50
+λ_seg=5  λ_anatomy=3  λ_perc=1  warmup=10
+Traceback (most recent call last):
+  File "/opt/repo/multi-task/train/train_multitask.py", line 878, in <module>
+    main()
+  File "/opt/repo/multi-task/train/train_multitask.py", line 691, in main
+    split_data   = load_split(args.split_dir, args.anatomy)
+  File "/opt/repo/multi-task/src/dataset.py", line 452, in load_split
+    raise FileNotFoundError(
+FileNotFoundError: Split file not found: /data/splits/abdomen_split.json
+Run: python scripts/prepare_splits.py --anatomy abdomen ...

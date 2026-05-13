@@ -1,0 +1,19 @@
+ablation_name,MRI→CT SSIM,MRI→CT MAE (HU),CT→MR SSIM,Mean Dice,Best Epoch
+g0_baseline_cyclegan,—,—,—,—,—
+g0_plus_seg,—,—,—,—,—
+g0_full_model,—,—,—,—,—
+g1_separate_encoders,—,—,—,—,—
+g2_anatomy_mr2ct_only,—,—,—,—,—
+g2_anatomy_soft_targets,—,—,—,—,—
+g2_lambda_anat_0p5,—,—,—,—,—
+g2_lambda_anat_1,—,—,—,—,—
+g2_lambda_anat_5,—,—,—,—,—
+g3_no_deep_sup,—,—,—,—,—
+g3_deep_sup_coarse_only,—,—,—,—,—
+g4_no_brainstem,—,—,—,—,—
+g4_no_parotids,—,—,—,—,—
+g4_no_mandible,—,—,—,—,—
+g4_cord_bg_only,—,—,—,—,—
+g5_warmup_0,—,—,—,—,—
+g5_warmup_10,—,—,—,—,—
+g5_warmup_20,—,—,—,—,—
