@@ -50,6 +50,7 @@ spec:
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "${MASTER_LOG}"
           }
 
+<<<<<<< HEAD
           # ── SynthRAD2025 on-disk directory names ───────────────────────────
           # The PVC stores data under HN / TH / AB; anatomy labels used for
           # configs and checkpoints remain head_neck / thorax / abdomen.
@@ -59,6 +60,8 @@ spec:
             ["abdomen"]="AB"
           )
 
+=======
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
           echo "Checking GPU..."
           nvidia-smi
 
@@ -99,6 +102,7 @@ spec:
           log "Running pre-flight checks..."
 
           # Verify data root exists and has the expected anatomy directories
+<<<<<<< HEAD
           DATA_ROOT=/data/Task1/Task1
           for ANATOMY in head_neck thorax abdomen; do
             DIR_NAME="${ANATOMY_DIR[$ANATOMY]}"
@@ -107,6 +111,15 @@ spec:
               exit 1
             fi
             log "  Found: ${DATA_ROOT}/${DIR_NAME} (anatomy=${ANATOMY})"
+=======
+          DATA_ROOT=/data/Task1
+          for ANATOMY in head_neck thorax abdomen; do
+            if [ ! -d "${DATA_ROOT}/${ANATOMY}" ]; then
+              log "ERROR: Data directory missing: ${DATA_ROOT}/${ANATOMY}"
+              exit 1
+            fi
+            log "  Found: ${DATA_ROOT}/${ANATOMY}"
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
           done
 
           # Verify Python can import the project
@@ -127,14 +140,23 @@ spec:
 
           # ── Generate train/val/test splits (idempotent — skips if exists) ───
           for ANATOMY in head_neck thorax abdomen; do
+<<<<<<< HEAD
             DIR_NAME="${ANATOMY_DIR[$ANATOMY]}"
+=======
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
             SPLIT_FILE="${SPLIT_DIR}/${ANATOMY}_split.json"
             if [ -f "${SPLIT_FILE}" ]; then
               log "Split already exists for ${ANATOMY}: ${SPLIT_FILE}"
             else
+<<<<<<< HEAD
               log "Generating split for ${ANATOMY} (data dir: ${DATA_ROOT}/${DIR_NAME})..."
               python scripts/prepare_splits.py \
                 --data_dir  "${DATA_ROOT}/${DIR_NAME}" \
+=======
+              log "Generating split for ${ANATOMY}..."
+              python scripts/prepare_splits.py \
+                --data_root "${DATA_ROOT}" \
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
                 --anatomy   "${ANATOMY}" \
                 --split_dir "${SPLIT_DIR}" \
                 --seed      42 \
@@ -151,22 +173,32 @@ spec:
             log "========================================"
             log "Starting training: ${ANATOMY}"
 
+<<<<<<< HEAD
             ANAT_LOG="${LOG_DIR}/${ANATOMY}"
             mkdir -p "${ANAT_LOG}"
 
             python -u train/train_multitask.py \
+=======
+            python train/train_multitask.py \
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
               --anatomy       "${ANATOMY}" \
               --data_root     "${DATA_ROOT}" \
               --split_dir     "${SPLIT_DIR}" \
               --config        configs/base_config.json \
               --output_dir    /data/results \
               --ablation_name "${ABLATION_NAME}" \
+<<<<<<< HEAD
               2>&1 | tee -a "${ANAT_LOG}/train.log" \
               || {
                 EXIT_CODE=$?
                 log "ERROR: training failed for ${ANATOMY} (exit code ${EXIT_CODE})"
                 log "Last 20 lines of ${ANAT_LOG}/train.log:"
                 tail -20 "${ANAT_LOG}/train.log" | tee -a "${MASTER_LOG}"
+=======
+              2>&1 | tee -a "${LOG_DIR}/multitask_${ANATOMY}.log" \
+              || {
+                log "ERROR: training failed for ${ANATOMY} (exit code $?)"
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
                 exit 1
               }
 

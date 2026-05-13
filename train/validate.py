@@ -216,7 +216,10 @@ def validate(
     val_loader: Any,
     device: torch.device,
     num_classes: int = 6,
+<<<<<<< HEAD
     compute_seg: bool = True,
+=======
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
 ) -> dict[str, Any]:
     """Run one full validation pass and return aggregated metrics.
 
@@ -293,6 +296,7 @@ def validate(
             accum["mr2ct_rmse"].append(_masked_rmse(fake_CT, real_CT, mask))
             accum["ct2mr_rmse"].append(_masked_rmse(fake_MR, real_MR, mask))
 
+<<<<<<< HEAD
             # ── Segmentation metrics (skipped when LAMBDA_SEG=0) ─────
             if compute_seg:
                 mr_per_class = _dice_per_class(
@@ -314,12 +318,36 @@ def validate(
                     outs["seg_real_CT"], seg_labels, num_classes
                 )
                 ct_class_iou_accum.append(ct_iou_per_class)
+=======
+            # ── MRI segmentation (primary — GT-supervised) ────────────
+            mr_per_class = _dice_per_class(
+                outs["seg_real_MR"], seg_labels, num_classes
+            )
+            class_dice_accum.append(mr_per_class)
+
+            mr_iou_per_class = _iou_per_class(
+                outs["seg_real_MR"], seg_labels, num_classes
+            )
+            class_iou_accum.append(mr_iou_per_class)
+
+            # ── CT segmentation (diagnostic — cross-modal proxy) ──────
+            ct_per_class = _dice_per_class(
+                outs["seg_real_CT"], seg_labels, num_classes
+            )
+            ct_class_dice_accum.append(ct_per_class)
+
+            ct_iou_per_class = _iou_per_class(
+                outs["seg_real_CT"], seg_labels, num_classes
+            )
+            ct_class_iou_accum.append(ct_iou_per_class)
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
 
     model.train()
 
     # ── Aggregate synthesis metrics ───────────────────────────────────────
     result: dict[str, Any] = {k: float(np.mean(v)) for k, v in accum.items()}
 
+<<<<<<< HEAD
     # ── Segmentation metrics ──────────────────────────────────────────────
     if compute_seg and class_dice_accum:
         mr_dice_array  = np.array(class_dice_accum)
@@ -348,22 +376,50 @@ def validate(
         ct_iou_per_cls  = [float("nan")] * n_fg
         ct_mean_dice    = float("nan")
         ct_mean_iou     = float("nan")
+=======
+    # ── MRI segmentation metrics ──────────────────────────────────────────
+    mr_dice_array  = np.array(class_dice_accum)           # (N, num_classes-1)
+    dice_per_class = mr_dice_array.mean(axis=0).tolist()
+    mean_dice = float(np.mean(dice_per_class)) if dice_per_class else 0.0
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
 
     result["mean_dice"]      = mean_dice
     result["dice_per_class"] = dice_per_class
     for i, d in enumerate(dice_per_class):
         result[f"dice_class_{i + 1}"] = float(d)
 
+<<<<<<< HEAD
+=======
+    mr_iou_array  = np.array(class_iou_accum)            # (N, num_classes-1)
+    iou_per_class = mr_iou_array.mean(axis=0).tolist()
+    mean_iou = float(np.mean(iou_per_class)) if iou_per_class else 0.0
+
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
     result["mean_iou"]      = mean_iou
     result["iou_per_class"] = iou_per_class
     for i, v in enumerate(iou_per_class):
         result[f"iou_class_{i + 1}"] = float(v)
 
+<<<<<<< HEAD
+=======
+    # ── CT segmentation metrics (diagnostic) ─────────────────────────────
+    ct_dice_array   = np.array(ct_class_dice_accum)
+    ct_dice_per_cls = ct_dice_array.mean(axis=0).tolist()
+    ct_mean_dice    = float(np.mean(ct_dice_per_cls)) if ct_dice_per_cls else 0.0
+
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
     result["ct_seg_mean_dice"] = ct_mean_dice
     result["ct_seg_per_class"] = ct_dice_per_cls
     for i, d in enumerate(ct_dice_per_cls):
         result[f"ct_seg_class_{i + 1}"] = float(d)
 
+<<<<<<< HEAD
+=======
+    ct_iou_array   = np.array(ct_class_iou_accum)
+    ct_iou_per_cls = ct_iou_array.mean(axis=0).tolist()
+    ct_mean_iou    = float(np.mean(ct_iou_per_cls)) if ct_iou_per_cls else 0.0
+
+>>>>>>> 257790b6644152ef05ac4d1dfcfdea979473c694
     result["ct_seg_mean_iou"] = ct_mean_iou
     result["ct_seg_iou_per_class"] = ct_iou_per_cls
     for i, v in enumerate(ct_iou_per_cls):
