@@ -7,14 +7,14 @@
 
   "BATCH_SIZE": 1,
 
-  "EPOCHS": 100,
+  "EPOCHS": 200,
 
   "LR":   2e-4,
   "LR_D": 1e-4,
   "BETA1": 0.5,
   "BETA2": 0.999,
 
-  "LAMBDA_CYCLE":         10,
+  "LAMBDA_CYCLE":          2,
   "LAMBDA_IDENTITY":       5,
 
   "LAMBDA_PAIRED_MR2CT":  10,
@@ -27,13 +27,13 @@
   "LAMBDA_ANATOMY":        3,
   "LAMBDA_ANATOMY_CT2MR":  3,
 
-  "SEG_WARMUP_EPOCHS":     5,
+  "SEG_WARMUP_EPOCHS":     10,
 
   "NUM_WORKERS": 4,
 
   "CHECKPOINT_FREQ": 10,
 
-  "DECAY_EPOCH": 50,
+  "DECAY_EPOCH": 100,
 
   "MR2CT_SSIM_FLOOR": 0.82,
   "CT2MR_SSIM_FLOOR": 0.75,
@@ -47,14 +47,15 @@
     "LAMBDA_PERCEPTUAL":    "Must remain 1. Previous value of 5 caused MRI→CT SSIM to drop from 0.85 → 0.70. Applied to BOTH synthesis directions.",
     "LAMBDA_PAIRED_MR2CT":  "Must equal LAMBDA_PAIRED_CT2MR. Asymmetry caused training instability in prior runs.",
     "LAMBDA_PAIRED_CT2MR":  "Must equal LAMBDA_PAIRED_MR2CT.",
-    "LAMBDA_ANATOMY":       "Anatomy consistency weight for MRI→CT direction (seg_fake_CT vs seg_real_MR).",
+    "LAMBDA_ANATOMY":       "Anatomy consistency weight for MRI→CT direction (seg_fake_CT vs seg_real_CT — both anchored to the supervised CT branch).",
     "LAMBDA_ANATOMY_CT2MR": "Anatomy consistency weight for CT→MRI direction (seg_fake_MR vs seg_real_CT). Set to 0 to ablate.",
-    "SEG_WARMUP_EPOCHS":    "During warmup (epoch < SEG_WARMUP_EPOCHS) only seg and paired losses are active; GAN / cycle losses start at epoch >= SEG_WARMUP_EPOCHS.",
+    "SEG_WARMUP_EPOCHS":    "seg_weight = min(1, (epoch-1)/SEG_WARMUP_EPOCHS). Only seg and anatomy losses are scaled by seg_weight — they ramp from 0→1 over these epochs. GAN, cycle, paired, perceptual, and identity losses are active from epoch 1 regardless.",
     "MR2CT_SSIM_FLOOR":          "Best-model guard: model is saved only when mr2ct_ssim >= this floor.",
     "CT2MR_SSIM_FLOOR":          "Symmetric guard: model is saved only when ct2mr_ssim >= this floor. Lower than MR2CT (CT→MRI is harder).",
     "MEAN_DICE_FLOOR":           "Segmentation guard on best_model.pth: 0.0 = disabled. E.g. set 0.4 to prevent saving models with collapsed segmentation.",
     "CLASS_WEIGHTS":             "Per-class CE weights for SegLoss, length=num_classes. null = uniform. Use inverse-freq weighting for small organs (e.g. pancreas).",
     "DEEP_SUPERVISION_WEIGHTS":  "Loss weights for auxiliary heads [aux_128x128, aux_256x256_pre_refine]. Scaled relative to main loss (e.g. [0.2, 0.4]).",
+    "LAMBDA_CYCLE":              "Reduced from 10 → 2. With same-patient paired data, LAMBDA_PAIRED already provides direct pixel supervision; LAMBDA_CYCLE=10 added a redundant ~10× reconstruction signal on top, making the combined reconstruction weight ~20× the adversarial signal. Generators converged to pixel-accurate outputs in early epochs, leaving discriminators with a trivial task and a weak GAN signal for the rest of training.",
     "DECAY_EPOCH":               "LR linear decay starts at this epoch and reaches 0 by epoch EPOCHS."
   }
 }

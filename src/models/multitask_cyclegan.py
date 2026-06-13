@@ -37,11 +37,12 @@ cycle_MR            F(E(G(E(MRI))))                 (B, 3, 256, 256)
 cycle_CT            G(E(F(E(CT))))                  (B, 3, 256, 256)
 idt_CT              G(E(CT))  – identity CT→CT      (B, 3, 256, 256)
 idt_MR              F(E(MRI)) – identity MRI→MRI    (B, 3, 256, 256)
-seg_real_MR         S(E(MRI))  – main logits        (B, C, 256, 256)
+seg_real_MR         S(E(MRI)) — main logits         None in train; (B,C,256,256) in eval
 seg_fake_CT         S(E(fake_CT)) – main logits     (B, C, 256, 256)
 seg_real_CT         S(E(CT))   – main logits        (B, C, 256, 256)
 seg_fake_MR         S(E(fake_MR)) – main logits     (B, C, 256, 256)
-seg_aux_real_MR     Deep-supervision aux logits     List[Tensor] (empty in eval)
+seg_aux_real_MR     Deep-supervision aux logits     None in train; List[Tensor] in eval
+seg_aux_real_CT     Deep-supervision aux logits     List[Tensor] (empty in eval)
 =================== =============================== ============================
 
 Usage in the training loop
@@ -54,8 +55,6 @@ easy to unit-test without a discriminator.
 """
 
 from __future__ import annotations
-
-from typing import Dict
 
 import torch
 import torch.nn as nn
@@ -258,7 +257,12 @@ class MultitaskCycleGAN(nn.Module):
         idt_MR  = self.F(feat_real_MR)
 
         # ── (3) Segment real MRI ─────────────────────────────────────────
-        seg_real_MR, seg_aux_real_MR = self.S(feat_real_MR, skip1_real_MR, skip2_real_MR)
+        # Only computed in eval mode — no loss is attached to seg_real_MR
+        # during training, so this forward pass is wasted compute there.
+        if not self.training:
+            seg_real_MR, seg_aux_real_MR = self.S(feat_real_MR, skip1_real_MR, skip2_real_MR)
+        else:
+            seg_real_MR = seg_aux_real_MR = None
 
         # ── (4) Encode real CT ───────────────────────────────────────────
         feat_real_CT, skip1_real_CT, skip2_real_CT = self._encode_and_segment(real_CT, "ct")
@@ -268,7 +272,7 @@ class MultitaskCycleGAN(nn.Module):
         idt_CT  = self.G(feat_real_CT)
 
         # ── (6) Segment real CT ──────────────────────────────────────────
-        seg_real_CT, _aux_real_CT = self.S(feat_real_CT, skip1_real_CT, skip2_real_CT)
+        seg_real_CT, aux_real_CT = self.S(feat_real_CT, skip1_real_CT, skip2_real_CT)
 
         # ── (7) Encode fake CT → cycle MRI ──────────────────────────────
         # fake_CT is a CT-domain image → use the CT encoder
@@ -298,7 +302,10 @@ class MultitaskCycleGAN(nn.Module):
             # ── Deep-supervision auxiliary logits (empty in eval mode) ───
             # List[Tensor]: [aux_128x128, aux_256x256_pre_refine]
             # Non-empty only in training mode and when use_deep_supervision=True.
+            # seg_real_MR / seg_aux_real_MR are None during training (no loss
+            # attached); populated during eval for validation metrics.
             "seg_aux_real_MR": seg_aux_real_MR,
+            "seg_aux_real_CT": aux_real_CT,
         }
 
     # ------------------------------------------------------------------

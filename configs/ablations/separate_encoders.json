@@ -1,0 +1,29 @@
+{
+  "_comment": "Ablation: separate per-domain encoders (E_MR + E_CT) instead of one shared E.",
+
+  "_purpose": [
+    "Tests whether the shared encoder is responsible for cross-modal knowledge transfer.",
+    "With separate encoders, all alignment between MRI and CT must emerge from the",
+    "cycle-consistency loss alone — the segmentation decoder S cannot share representations",
+    "across domains because E_MR and E_CT are independent.",
+    "",
+    "Expected outcome (hypothesis): separate encoders should produce lower MRI Dice",
+    "(seg_real_MR, the cross-modal proxy) than the shared-encoder baseline, confirming",
+    "that E is the mechanism for segmentation knowledge transfer.",
+    "",
+    "Run command:",
+    "  python train/train_multitask.py \\",
+    "      --anatomy <region> \\",
+    "      --data_root /data/synthrad2025 \\",
+    "      --split_dir splits/ \\",
+    "      --config configs/ablations/separate_encoders.json \\",
+    "      --ablation_name separate_encoders"
+  ],
+
+  "SHARED_ENCODER": false,
+
+  "_notes": {
+    "SHARED_ENCODER": "false = use E_MR for MRI inputs and E_CT for CT inputs. Both encoders have identical architecture but independent weights.",
+    "Other hyperparameters": "Inherited from base_config.json by the training script's config-layering logic. Only keys present here override the base config."
+  }
+}

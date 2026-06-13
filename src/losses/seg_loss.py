@@ -30,6 +30,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.cuda.amp as amp
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +56,7 @@ class DiceLoss(nn.Module):
         super().__init__()
         self.smooth = smooth
 
+    @amp.custom_fwd(cast_inputs=torch.float32)
     def forward(
         self,
         logits: torch.Tensor,
@@ -62,6 +64,12 @@ class DiceLoss(nn.Module):
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute soft Dice loss.
+
+        Decorated with ``@amp.custom_fwd(cast_inputs=torch.float32)`` so that
+        the softmax and Dice arithmetic always run in full precision under AMP.
+        Without this, float16 softmax can return exact 0 for minority-class
+        logits, making the Dice numerator 0 and zeroing out the gradient for
+        small organs (pancreas, esophagus) early in training.
 
         Args:
             logits:  Raw class logits of shape ``(B, C, H, W)``.

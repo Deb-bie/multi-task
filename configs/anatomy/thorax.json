@@ -11,13 +11,13 @@
   ],
 
   "_memory_note": "OOMKilled root cause was unbounded dataset cache (fixed with LRU cap in dataset.py). BATCH_SIZE=2 is safe again. NUM_WORKERS=2 balances throughput vs RAM. LAMBDA_PERCEPTUAL=0 skips VGG16 for thorax to keep epoch time reasonable (~1.5h vs ~4.4h).",
-  "BATCH_SIZE": 2,
+  "BATCH_SIZE": 1,
   "NUM_WORKERS": 2,
   "LAMBDA_PERCEPTUAL": 0,
-  "EPOCHS": 100,
-  "DECAY_EPOCH": 10,
+  "EPOCHS": 200,
+  "DECAY_EPOCH": 100,
 
-  "SEG_WARMUP_EPOCHS": 5,
+  "SEG_WARMUP_EPOCHS": 10,
 
   "_note_class_weights": "Median-frequency balancing. Approx voxel fractions: lung_L~18%, lung_R~18%, heart~8%, spinal_cord~1%, esophagus~0.3%. Run scripts/compute_class_weights.py to recompute from your training split.",
   "CLASS_WEIGHTS": [0.05, 0.35, 0.35, 0.7, 4.0, 8.0]

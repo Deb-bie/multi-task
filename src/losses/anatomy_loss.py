@@ -1,11 +1,18 @@
 """
 Anatomy consistency loss for the multi-task CycleGAN framework.
 
-Enforces that a synthetic image preserves the same organ boundaries as its
-source modality.  Applied **in both synthesis directions**:
+Enforces that a synthetic image preserves the same organ boundaries as the
+directly GT-supervised CT segmentation branch.  Applied **in both synthesis
+directions**, both anchored to ``seg_real_CT`` (the TotalSegmentator-supervised
+branch):
 
-* MRI→CT:  ``seg_fake_CT`` should agree with ``seg_real_MR`` (source MRI).
-* CT→MRI:  ``seg_fake_MR`` should agree with ``seg_real_CT`` (source CT).
+* MRI→CT:  ``seg_fake_CT`` should agree with ``seg_real_CT`` (supervised CT seg).
+* CT→MRI:  ``seg_fake_MR`` should agree with ``seg_real_CT`` (supervised CT seg).
+
+Using ``seg_real_CT`` as the teacher for both directions is stronger than using
+the unsupervised ``seg_real_MR`` for the MRI→CT direction: it anchors both
+synthesis paths to the labelled ground truth rather than to an unverified
+cross-modal proxy.
 
 Loss formulation
 ----------------
@@ -56,12 +63,12 @@ class AnatomyConsistencyLoss(nn.Module):
     Designed to be called **twice per training step** — once for each
     synthesis direction:
 
-    MRI→CT direction::
+    Both directions use ``seg_real_CT`` as the teacher (directly GT-supervised)::
 
+        # MRI→CT: anchor synthesised CT anatomy to the supervised CT branch
         L_anatomy_mr2ct = AnatomyConsistencyLoss()(seg_fake_CT, seg_real_CT, mask)
 
-    CT→MRI direction::
-
+        # CT→MRI: anchor synthesised MRI anatomy to the supervised CT branch
         L_anatomy_ct2mr = AnatomyConsistencyLoss()(seg_fake_MR, seg_real_CT, mask)
 
     Two target modes are supported:

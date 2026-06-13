@@ -9,7 +9,7 @@
     "mandible",
     "spinal_cord"
   ],
-  "SEG_WARMUP_EPOCHS": 5,
+  "SEG_WARMUP_EPOCHS": 10,
 
   "_note_class_weights": "Median-frequency balancing. Approx voxel fractions: brainstem~1.5%, parotid_L~1%, parotid_R~1%, mandible~3%, spinal_cord~0.8%. Run scripts/compute_class_weights.py to recompute from your training split.",
   "CLASS_WEIGHTS": [0.05, 2.0, 3.0, 3.0, 1.0, 3.5]

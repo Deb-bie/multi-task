@@ -44,8 +44,11 @@ L_anatomy  seg_weight · [λ_anat    · Dice(seg_fake_CT, argmax(seg_real_CT).de
 
 Discriminator bug fix
 ---------------------
-Original code: D_MR scale-1 and scale-2 had mismatched coefficients.
-Fix applied here: both scales get 0.5 (equal weighting).
+Original code: loss_D_MR = 0.5*scale1 + 0.5*scale2 (summed to 1.0×) while
+loss_D_CT = 0.5*(real + fake) (summed to 0.5×) — D_MR received 2× gradient.
+Fix applied here: outer 0.5 wraps the whole D_MR expression so both
+discriminators receive equal gradient magnitude:
+    loss_D_MR = 0.5 * (0.5*(s1_real+s1_fake) + 0.5*(s2_real+s2_fake))
 """
 
 from __future__ import annotations
@@ -273,23 +276,31 @@ def train_step(
             + gan_loss(p2_fake, is_real=True)
         )
 
-        # (b) Cycle-consistency (masked) ─────────────────────────────────
+        # Shared foreground mask expanded to (B, 3, H, W) for all masked L1
+        # terms.  Dividing by the foreground count (not the full spatial grid)
+        # prevents patient-specific loss scaling: a patient whose body covers
+        # 60% of the image would otherwise produce a 40% smaller loss than one
+        # that fills the frame, creating an invisible per-sample bias.
+        _fg   = mask.expand_as(real_MR)          # (B, 3, H, W)
+        _n_fg = _fg.sum().clamp(min=1.0)
+
+        # (b) Cycle-consistency (masked, foreground-normalised) ───────────
         L_cycle = (
-            F.l1_loss(outs["cycle_MR"] * mask, real_MR * mask)
-            + F.l1_loss(outs["cycle_CT"] * mask, real_CT * mask)
+            ((outs["cycle_MR"] - real_MR).abs() * _fg).sum() / _n_fg
+            + ((outs["cycle_CT"] - real_CT).abs() * _fg).sum() / _n_fg
         ) * config["LAMBDA_CYCLE"]
 
-        # (c) Identity (masked) ──────────────────────────────────────────
+        # (c) Identity (masked, foreground-normalised) ────────────────────
         L_identity = (
-            F.l1_loss(outs["idt_CT"] * mask, real_CT * mask)
-            + F.l1_loss(outs["idt_MR"] * mask, real_MR * mask)
+            ((outs["idt_CT"] - real_CT).abs() * _fg).sum() / _n_fg
+            + ((outs["idt_MR"] - real_MR).abs() * _fg).sum() / _n_fg
         ) * config["LAMBDA_IDENTITY"]
 
-        # (d) Paired supervision (masked, asymmetric λ) ──────────────────
+        # (d) Paired supervision (masked, foreground-normalised, asymmetric λ)
         L_paired = (
-            F.l1_loss(outs["fake_CT"] * mask, real_CT * mask)
+            ((outs["fake_CT"] - real_CT).abs() * _fg).sum() / _n_fg
             * config["LAMBDA_PAIRED_MR2CT"]
-            + F.l1_loss(outs["fake_MR"] * mask, real_MR * mask)
+            + ((outs["fake_MR"] - real_MR).abs() * _fg).sum() / _n_fg
             * config["LAMBDA_PAIRED_CT2MR"]
         )
 
@@ -411,17 +422,21 @@ def train_step(
             + gan_loss(model.D_CT(fake_CT_buf),   is_real=False)
         )
 
-        # D_MR (MultiScale) ── BUG FIX: both scales get 0.5 ──────────────
+        # D_MR (MultiScale) ─────────────────────────────────────────────
+        # Outer 0.5 matches D_CT's coefficient so both discriminators
+        # contribute equally to loss_D.  Without it, loss_D_MR = 1.0×
+        # while loss_D_CT = 0.5×, giving D_MR 2× the gradient and
+        # causing CT→MRI synthesis to lag behind MRI→CT throughout training.
         p1_real, p2_real = model.D_MR(real_MR)
         p1_fake_d, p2_fake_d = model.D_MR(fake_MR_buf)
 
-        loss_D_MR = (
+        loss_D_MR = 0.5 * (
             # scale-1  (full resolution)  — coefficient 0.5
             0.5 * (
                 gan_loss(p1_real,   is_real=True)
                 + gan_loss(p1_fake_d, is_real=False)
             )
-            # scale-2  (half resolution)  — coefficient 0.5  [bug fix applied]
+            # scale-2  (half resolution)  — coefficient 0.5
             + 0.5 * (
                 gan_loss(p2_real,   is_real=True)
                 + gan_loss(p2_fake_d, is_real=False)
@@ -761,7 +776,7 @@ def main() -> None:
     latest_ckpt = find_latest_checkpoint(ckpt_dir)
     if latest_ckpt is not None:
         print(f"Resuming from checkpoint: {latest_ckpt.name}")
-        ckpt = torch.load(latest_ckpt, map_location=device)
+        ckpt = torch.load(latest_ckpt, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model_state"])
         opt_G.load_state_dict(ckpt["opt_G_state"])
         opt_D.load_state_dict(ckpt["opt_D_state"])
@@ -873,10 +888,16 @@ def main() -> None:
         mr2ct_floor = config.get("MR2CT_SSIM_FLOOR", 0.82)
         ct2mr_floor = config.get("CT2MR_SSIM_FLOOR", 0.75)
         dice_floor  = config.get("MEAN_DICE_FLOOR",  0.0)
+        # When seg is disabled (LAMBDA_SEG=0), mean_dice=nan.
+        # nan >= anything evaluates to False, which would block best_model.pth
+        # from ever being saved on pure synthesis runs.  Skip the dice floor
+        # check entirely when seg is disabled.
+        seg_enabled = config.get("LAMBDA_SEG", 0) > 0
+        dice_ok = (not seg_enabled) or (val_metrics["mean_dice"] >= dice_floor)
         if (mean_ssim > best_ssim
                 and val_metrics["mr2ct_ssim"] >= mr2ct_floor
                 and val_metrics["ct2mr_ssim"] >= ct2mr_floor
-                and val_metrics["mean_dice"]  >= dice_floor):
+                and dice_ok):
             best_ssim = mean_ssim
             save_best_model(ckpt_dir, epoch, model, val_metrics, best_ssim)
             print(f"  → New best_model  mean_ssim={best_ssim:.4f}  "
@@ -902,9 +923,14 @@ def main() -> None:
                     "loss_cycle", "loss_seg", "loss_anatomy"):
             csv_row.setdefault(lk, 0.0)
         csv_row.update(val_metrics)
-        # Remove nested list (dice_per_class) before writing — individual
-        # dice_class_{i} columns are already in val_metrics
-        csv_row.pop("dice_per_class", None)
+        # Remove nested list columns before writing — individual per-class
+        # columns (dice_class_{i}, iou_class_{i}, etc.) are already in val_metrics.
+        # All four list keys must be popped; csv.DictWriter would otherwise
+        # write them as raw Python list strings ("[0.51, 0.43, ...]") which
+        # cannot be parsed as floats in downstream analysis.
+        for _list_key in ("dice_per_class", "iou_per_class",
+                          "ct_seg_per_class", "ct_seg_iou_per_class"):
+            csv_row.pop(_list_key, None)
         append_csv_row(csv_path, csv_row)
 
         # Memory housekeeping
