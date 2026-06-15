@@ -44,11 +44,8 @@ L_anatomy  seg_weight · [λ_anat    · Dice(seg_fake_CT, argmax(seg_real_CT).de
 
 Discriminator bug fix
 ---------------------
-Original code: loss_D_MR = 0.5*scale1 + 0.5*scale2 (summed to 1.0×) while
-loss_D_CT = 0.5*(real + fake) (summed to 0.5×) — D_MR received 2× gradient.
-Fix applied here: outer 0.5 wraps the whole D_MR expression so both
-discriminators receive equal gradient magnitude:
-    loss_D_MR = 0.5 * (0.5*(s1_real+s1_fake) + 0.5*(s2_real+s2_fake))
+Original code: D_MR scale-1 and scale-2 had mismatched coefficients.
+Fix applied here: both scales get 0.5 (equal weighting).
 """
 
 from __future__ import annotations
@@ -276,31 +273,23 @@ def train_step(
             + gan_loss(p2_fake, is_real=True)
         )
 
-        # Shared foreground mask expanded to (B, 3, H, W) for all masked L1
-        # terms.  Dividing by the foreground count (not the full spatial grid)
-        # prevents patient-specific loss scaling: a patient whose body covers
-        # 60% of the image would otherwise produce a 40% smaller loss than one
-        # that fills the frame, creating an invisible per-sample bias.
-        _fg   = mask.expand_as(real_MR)          # (B, 3, H, W)
-        _n_fg = _fg.sum().clamp(min=1.0)
-
-        # (b) Cycle-consistency (masked, foreground-normalised) ───────────
+        # (b) Cycle-consistency (masked) ─────────────────────────────────
         L_cycle = (
-            ((outs["cycle_MR"] - real_MR).abs() * _fg).sum() / _n_fg
-            + ((outs["cycle_CT"] - real_CT).abs() * _fg).sum() / _n_fg
+            F.l1_loss(outs["cycle_MR"] * mask, real_MR * mask)
+            + F.l1_loss(outs["cycle_CT"] * mask, real_CT * mask)
         ) * config["LAMBDA_CYCLE"]
 
-        # (c) Identity (masked, foreground-normalised) ────────────────────
+        # (c) Identity (masked) ──────────────────────────────────────────
         L_identity = (
-            ((outs["idt_CT"] - real_CT).abs() * _fg).sum() / _n_fg
-            + ((outs["idt_MR"] - real_MR).abs() * _fg).sum() / _n_fg
+            F.l1_loss(outs["idt_CT"] * mask, real_CT * mask)
+            + F.l1_loss(outs["idt_MR"] * mask, real_MR * mask)
         ) * config["LAMBDA_IDENTITY"]
 
-        # (d) Paired supervision (masked, foreground-normalised, asymmetric λ)
+        # (d) Paired supervision (masked, asymmetric λ) ──────────────────
         L_paired = (
-            ((outs["fake_CT"] - real_CT).abs() * _fg).sum() / _n_fg
+            F.l1_loss(outs["fake_CT"] * mask, real_CT * mask)
             * config["LAMBDA_PAIRED_MR2CT"]
-            + ((outs["fake_MR"] - real_MR).abs() * _fg).sum() / _n_fg
+            + F.l1_loss(outs["fake_MR"] * mask, real_MR * mask)
             * config["LAMBDA_PAIRED_CT2MR"]
         )
 
@@ -313,8 +302,8 @@ def train_step(
         # budget), in which case we skip VGG entirely.
         if perc_loss is not None and config["LAMBDA_PERCEPTUAL"] > 0:
             L_perc = (
-                perc_loss(outs["fake_CT"], real_CT, mask)   # MRI→CT direction
-                + perc_loss(outs["fake_MR"], real_MR, mask) # CT→MRI direction
+                perc_loss(outs["fake_CT"].float(), real_CT.float(), mask)   # MRI→CT direction
+                + perc_loss(outs["fake_MR"].float(), real_MR.float(), mask) # CT→MRI direction
             ) * config["LAMBDA_PERCEPTUAL"]
         else:
             L_perc = torch.zeros(1, device=device)
@@ -322,8 +311,14 @@ def train_step(
         # (f) Segmentation (warmup-weighted, foreground-masked) ───────────
         # TotalSegmentator labels come from ct.mha → they are in CT space.
         # Supervise seg_real_CT directly; seg_real_MR learns via anatomy loss.
+        #
+        # ⚠ fp16 softmax overflow fix: inside autocast, seg decoder outputs are
+        # fp16.  Once training stabilises (~epoch 13+), confident logits grow
+        # beyond 11, causing e^x to exceed fp16 max (65 504) inside
+        # F.cross_entropy / F.softmax, producing NaN → batch skipped.
+        # Casting to float32 here and in anat_loss eliminates this entirely.
         L_seg = (
-            seg_loss(outs["seg_real_CT"], seg_labels, mask)
+            seg_loss(outs["seg_real_CT"].float(), seg_labels, mask)
             * config["LAMBDA_SEG"]
             * seg_weight
         )
@@ -360,7 +355,7 @@ def train_step(
                 else:
                     tgt_ds, msk_ds = seg_labels, mask
                 L_seg = L_seg + ds_w * (
-                    seg_loss(aux_logits, tgt_ds, msk_ds)
+                    seg_loss(aux_logits.float(), tgt_ds, msk_ds)
                     * config["LAMBDA_SEG"]
                     * seg_weight
                 )
@@ -378,10 +373,10 @@ def train_step(
         #   seg_real_MR is left as an unsupervised cross-modal branch that
         #   learns solely through the GAN / cycle objectives.
         L_anatomy = (
-            anat_loss(outs["seg_fake_CT"], outs["seg_real_CT"], mask)
+            anat_loss(outs["seg_fake_CT"].float(), outs["seg_real_CT"].float(), mask)
             * config["LAMBDA_ANATOMY"]
             * seg_weight
-            + anat_loss(outs["seg_fake_MR"], outs["seg_real_CT"], mask)
+            + anat_loss(outs["seg_fake_MR"].float(), outs["seg_real_CT"].float(), mask)
             * config.get("LAMBDA_ANATOMY_CT2MR", config["LAMBDA_ANATOMY"])
             * seg_weight
         )
@@ -422,21 +417,19 @@ def train_step(
             + gan_loss(model.D_CT(fake_CT_buf),   is_real=False)
         )
 
-        # D_MR (MultiScale) ─────────────────────────────────────────────
-        # Outer 0.5 matches D_CT's coefficient so both discriminators
-        # contribute equally to loss_D.  Without it, loss_D_MR = 1.0×
-        # while loss_D_CT = 0.5×, giving D_MR 2× the gradient and
-        # causing CT→MRI synthesis to lag behind MRI→CT throughout training.
+        # D_MR (MultiScale) — apply outer 0.5 to match D_CT scale ─────────
+        # Each scale contributes equally; outer 0.5 keeps D_MR gradient
+        # magnitude consistent with D_CT (which also uses 0.5).
         p1_real, p2_real = model.D_MR(real_MR)
         p1_fake_d, p2_fake_d = model.D_MR(fake_MR_buf)
 
         loss_D_MR = 0.5 * (
-            # scale-1  (full resolution)  — coefficient 0.5
+            # scale-1  (full resolution)
             0.5 * (
                 gan_loss(p1_real,   is_real=True)
                 + gan_loss(p1_fake_d, is_real=False)
             )
-            # scale-2  (half resolution)  — coefficient 0.5
+            # scale-2  (half resolution)
             + 0.5 * (
                 gan_loss(p2_real,   is_real=True)
                 + gan_loss(p2_fake_d, is_real=False)
@@ -776,7 +769,7 @@ def main() -> None:
     latest_ckpt = find_latest_checkpoint(ckpt_dir)
     if latest_ckpt is not None:
         print(f"Resuming from checkpoint: {latest_ckpt.name}")
-        ckpt = torch.load(latest_ckpt, map_location=device, weights_only=False)
+        ckpt = torch.load(latest_ckpt, map_location=device)
         model.load_state_dict(ckpt["model_state"])
         opt_G.load_state_dict(ckpt["opt_G_state"])
         opt_D.load_state_dict(ckpt["opt_D_state"])
@@ -888,16 +881,10 @@ def main() -> None:
         mr2ct_floor = config.get("MR2CT_SSIM_FLOOR", 0.82)
         ct2mr_floor = config.get("CT2MR_SSIM_FLOOR", 0.75)
         dice_floor  = config.get("MEAN_DICE_FLOOR",  0.0)
-        # When seg is disabled (LAMBDA_SEG=0), mean_dice=nan.
-        # nan >= anything evaluates to False, which would block best_model.pth
-        # from ever being saved on pure synthesis runs.  Skip the dice floor
-        # check entirely when seg is disabled.
-        seg_enabled = config.get("LAMBDA_SEG", 0) > 0
-        dice_ok = (not seg_enabled) or (val_metrics["mean_dice"] >= dice_floor)
         if (mean_ssim > best_ssim
                 and val_metrics["mr2ct_ssim"] >= mr2ct_floor
                 and val_metrics["ct2mr_ssim"] >= ct2mr_floor
-                and dice_ok):
+                and val_metrics["mean_dice"]  >= dice_floor):
             best_ssim = mean_ssim
             save_best_model(ckpt_dir, epoch, model, val_metrics, best_ssim)
             print(f"  → New best_model  mean_ssim={best_ssim:.4f}  "
@@ -923,14 +910,9 @@ def main() -> None:
                     "loss_cycle", "loss_seg", "loss_anatomy"):
             csv_row.setdefault(lk, 0.0)
         csv_row.update(val_metrics)
-        # Remove nested list columns before writing — individual per-class
-        # columns (dice_class_{i}, iou_class_{i}, etc.) are already in val_metrics.
-        # All four list keys must be popped; csv.DictWriter would otherwise
-        # write them as raw Python list strings ("[0.51, 0.43, ...]") which
-        # cannot be parsed as floats in downstream analysis.
-        for _list_key in ("dice_per_class", "iou_per_class",
-                          "ct_seg_per_class", "ct_seg_iou_per_class"):
-            csv_row.pop(_list_key, None)
+        # Remove nested list (dice_per_class) before writing — individual
+        # dice_class_{i} columns are already in val_metrics
+        csv_row.pop("dice_per_class", None)
         append_csv_row(csv_path, csv_row)
 
         # Memory housekeeping
