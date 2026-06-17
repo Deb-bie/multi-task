@@ -312,9 +312,14 @@ def train_step(
         # perc_loss is None when LAMBDA_PERCEPTUAL=0 (e.g. thorax memory
         # budget), in which case we skip VGG entirely.
         if perc_loss is not None and config["LAMBDA_PERCEPTUAL"] > 0:
+            # L_perc = (
+            #     perc_loss(outs["fake_CT"], real_CT, mask)   # MRI→CT direction
+            #     + perc_loss(outs["fake_MR"], real_MR, mask) # CT→MRI direction
+            # ) * config["LAMBDA_PERCEPTUAL"]
+
             L_perc = (
-                perc_loss(outs["fake_CT"], real_CT, mask)   # MRI→CT direction
-                + perc_loss(outs["fake_MR"], real_MR, mask) # CT→MRI direction
+                perc_loss(outs["fake_CT"].float(), real_CT.float(), mask)
+                + perc_loss(outs["fake_MR"].float(), real_MR.float(), mask)
             ) * config["LAMBDA_PERCEPTUAL"]
         else:
             L_perc = torch.zeros(1, device=device)
@@ -323,7 +328,7 @@ def train_step(
         # TotalSegmentator labels come from ct.mha → they are in CT space.
         # Supervise seg_real_CT directly; seg_real_MR learns via anatomy loss.
         L_seg = (
-            seg_loss(outs["seg_real_CT"], seg_labels, mask)
+            seg_loss(outs["seg_real_CT"].float(), seg_labels, mask)
             * config["LAMBDA_SEG"]
             * seg_weight
         )
@@ -360,7 +365,7 @@ def train_step(
                 else:
                     tgt_ds, msk_ds = seg_labels, mask
                 L_seg = L_seg + ds_w * (
-                    seg_loss(aux_logits, tgt_ds, msk_ds)
+                    seg_loss(aux_logits.float(), tgt_ds, msk_ds)
                     * config["LAMBDA_SEG"]
                     * seg_weight
                 )
@@ -378,10 +383,10 @@ def train_step(
         #   seg_real_MR is left as an unsupervised cross-modal branch that
         #   learns solely through the GAN / cycle objectives.
         L_anatomy = (
-            anat_loss(outs["seg_fake_CT"], outs["seg_real_CT"], mask)
+            anat_loss(outs["seg_fake_CT"].float(), outs["seg_real_CT"].float(), mask)
             * config["LAMBDA_ANATOMY"]
             * seg_weight
-            + anat_loss(outs["seg_fake_MR"], outs["seg_real_CT"], mask)
+            + anat_loss(outs["seg_fake_MR"].float(), outs["seg_real_CT"].float(), mask)
             * config.get("LAMBDA_ANATOMY_CT2MR", config["LAMBDA_ANATOMY"])
             * seg_weight
         )
