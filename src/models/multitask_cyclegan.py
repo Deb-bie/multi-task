@@ -259,8 +259,15 @@ class MultitaskCycleGAN(nn.Module):
         # ── (3) Segment real MRI ─────────────────────────────────────────
         # Only computed in eval mode — no loss is attached to seg_real_MR
         # during training, so this forward pass is wasted compute there.
+        # ⚠ AMP float32 guard: seg decoder logits overflow fp16 once training
+        # stabilises (confident logits > ~11 → e^x > fp16 max = 65504 → NaN).
+        # autocast(enabled=False) + .float() forces fp32 for the seg decoder
+        # regardless of the outer autocast context in train_step.
         if not self.training:
-            seg_real_MR, seg_aux_real_MR = self.S(feat_real_MR, skip1_real_MR, skip2_real_MR)
+            with torch.autocast("cuda", enabled=False):
+                seg_real_MR, seg_aux_real_MR = self.S(
+                    feat_real_MR.float(), skip1_real_MR.float(), skip2_real_MR.float()
+                )
         else:
             seg_real_MR = seg_aux_real_MR = None
 
@@ -272,19 +279,28 @@ class MultitaskCycleGAN(nn.Module):
         idt_CT  = self.G(feat_real_CT)
 
         # ── (6) Segment real CT ──────────────────────────────────────────
-        seg_real_CT, aux_real_CT = self.S(feat_real_CT, skip1_real_CT, skip2_real_CT)
+        with torch.autocast("cuda", enabled=False):
+            seg_real_CT, aux_real_CT = self.S(
+                feat_real_CT.float(), skip1_real_CT.float(), skip2_real_CT.float()
+            )
 
         # ── (7) Encode fake CT → cycle MRI ──────────────────────────────
         # fake_CT is a CT-domain image → use the CT encoder
         feat_fake_CT, skip1_fake_CT, skip2_fake_CT = self._encode_and_segment(fake_CT, "ct")
         cycle_MR    = self.F(feat_fake_CT)
-        seg_fake_CT, _aux_fake_CT = self.S(feat_fake_CT, skip1_fake_CT, skip2_fake_CT)
+        with torch.autocast("cuda", enabled=False):
+            seg_fake_CT, _aux_fake_CT = self.S(
+                feat_fake_CT.float(), skip1_fake_CT.float(), skip2_fake_CT.float()
+            )
 
         # ── (8) Encode fake MRI → cycle CT ──────────────────────────────
         # fake_MR is an MRI-domain image → use the MR encoder
         feat_fake_MR, skip1_fake_MR, skip2_fake_MR = self._encode_and_segment(fake_MR, "mr")
         cycle_CT    = self.G(feat_fake_MR)
-        seg_fake_MR, _aux_fake_MR = self.S(feat_fake_MR, skip1_fake_MR, skip2_fake_MR)
+        with torch.autocast("cuda", enabled=False):
+            seg_fake_MR, _aux_fake_MR = self.S(
+                feat_fake_MR.float(), skip1_fake_MR.float(), skip2_fake_MR.float()
+            )
 
         return {
             # ── Synthesis outputs ────────────────────────────────────────
