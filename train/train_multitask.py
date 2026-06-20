@@ -68,7 +68,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.amp import GradScaler
+from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
@@ -765,8 +765,8 @@ def main() -> None:
     # ── AMP scalers ─────────────────────────────────────────────────────────
     # BF16 autocast does not require gradient scaling (same exponent range as
     # FP32 → no underflow → no need to inflate/deflate gradients).
-    scaler_G = GradScaler("cuda", enabled=False)
-    scaler_D = GradScaler("cuda", enabled=False)
+    scaler_G = GradScaler(enabled=False)
+    scaler_D = GradScaler(enabled=False)
 
     # ── Replay buffers (size 50 per spec) ──────────────────────────────────
     buf_CT = ImageBuffer(max_size=50)
