@@ -24,8 +24,8 @@
 
   "LAMBDA_SEG":            5,
 
-  "LAMBDA_ANATOMY":        3,
-  "LAMBDA_ANATOMY_CT2MR":  3,
+  "LAMBDA_ANATOMY":        1,
+  "LAMBDA_ANATOMY_CT2MR":  1,
 
   "SEG_WARMUP_EPOCHS":     10,
 
